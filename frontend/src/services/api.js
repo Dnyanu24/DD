@@ -11,3 +11,4 @@ export async function analyzeFile(file) {
 
   return res.json();
 }
+  
