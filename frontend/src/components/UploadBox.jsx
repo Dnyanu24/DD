@@ -10,7 +10,7 @@ export default function UploadBox({ onResult }) {
   return (
     <input
       type="file"
-      className="border p-2"
+      className="border border-gray-600 bg-gray-700 text-white p-2 rounded"
       onChange={handleUpload}
     />
   );

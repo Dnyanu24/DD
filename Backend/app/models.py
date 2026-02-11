@@ -13,6 +13,7 @@ class Company(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     sectors = relationship("Sector", back_populates="company")
+    users = relationship("User", back_populates="company")
 
 # Sector Model
 class Sector(Base):
@@ -44,9 +45,11 @@ class User(Base):
     username = Column(String(255), unique=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
     role = Column(String(50), nullable=False)  # sector_head, ceo, admin
+    company_id = Column(Integer, ForeignKey("companies.id"), nullable=False)
     sector_id = Column(Integer, ForeignKey("sectors.id"), nullable=True)  # for sector_head
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    company = relationship("Company", back_populates="users")
     sector = relationship("Sector", back_populates="users")
 
 # Raw Data Model
@@ -109,6 +112,15 @@ class AIRecommendation(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     prediction = relationship("AIPrediction", back_populates="recommendations")
+
+# Report Model
+class Report(Base):
+    __tablename__ = "reports"
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String(255), nullable=False)
+    content = Column(Text, nullable=False)
+    date = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 # Feedback Log Model
 class FeedbackLog(Base):

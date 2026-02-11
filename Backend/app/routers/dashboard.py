@@ -9,6 +9,7 @@ from app.models import (
     AIPrediction, AIRecommendation, FeedbackLog
 )
 from app.dependencies import get_current_user, require_sector_head, require_ceo, require_admin
+from app.services.feedback_learning import FeedbackLearningEngine
 
 router = APIRouter()
 

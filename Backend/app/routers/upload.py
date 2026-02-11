@@ -1,9 +1,10 @@
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Form
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Form, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import Optional
 import pandas as pd
 import json
 from datetime import datetime
+import asyncio
 
 from app.database import SessionLocal
 from app.models import RawData, CleanedData, DataQualityScore, Sector, Product, User
@@ -67,9 +68,24 @@ async def upload_data(
     db.commit()
     db.refresh(raw_data_entry)
 
-    # Automatic data cleaning
+    # Get optimal cleaning config from feedback learning
+    from app.services.feedback_learning import FeedbackLearningEngine
+    learning_engine = FeedbackLearningEngine()
+
+    # Analyze data characteristics for optimal cleaning
+    data_characteristics = {
+        'skewness': df.select_dtypes(include=[np.number]).skew().mean() if len(df.select_dtypes(include=[np.number]).columns) > 0 else 0,
+        'needs_normalization': True,
+        'needs_standardization': False,
+        'has_noise': len(df) > 50,
+        'has_text': len(df.select_dtypes(include=['object']).columns) > 0
+    }
+
+    optimal_config = learning_engine.get_optimal_cleaning_config(data_characteristics)
+
+    # Automatic data cleaning with learned preferences
     cleaning_engine = DataCleaningEngine()
-    cleaned_df = cleaning_engine.run_full_pipeline(df)
+    cleaned_df = cleaning_engine.run_full_pipeline(df, optimal_config)
 
     # Store cleaned data
     cleaned_data_entry = CleanedData(

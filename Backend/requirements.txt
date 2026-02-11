@@ -8,3 +8,7 @@ psycopg2-binary
 python-multipart
 spacy
 nltk
+python-jose[cryptography]
+passlib[bcrypt]
+python-decouple
+statsmodels

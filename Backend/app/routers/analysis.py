@@ -8,6 +8,7 @@ from app.database import SessionLocal
 from app.models import RawData, CleanedData, AIPrediction, AIRecommendation
 from app.services.data_cleaning import DataCleaningEngine
 from app.services.ai_predictions import AIPredictionEngine
+from app.services.feedback_learning import FeedbackLearningEngine
 from app.dependencies import get_current_user, require_sector_head
 from app.models import User
 
