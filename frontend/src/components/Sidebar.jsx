@@ -1,52 +1,77 @@
 import { Link, useLocation } from "react-router-dom";
-import { BarChart3, Upload, Zap, Brain, PieChart, FileText, Users, Settings, LogOut, Home } from "lucide-react";
 
-const menuItems = [
-  { name: "Dashboard", icon: Home, path: "/" },
-  { name: "Data Upload", icon: Upload, path: "/upload" },
-  { name: "Data Cleaning", icon: Zap, path: "/cleaning" },
-  { name: "AI Models", icon: Brain, path: "/models" },
-  { name: "Visualizations", icon: PieChart, path: "/visualizations" },
-  { name: "Reports", icon: FileText, path: "/reports" },
-  { name: "Role Management", icon: Users, path: "/roles" },
-  { name: "Settings", icon: Settings, path: "/settings" },
-];
-
-export default function Sidebar() {
+export default function Sidebar({ currentRole }) {
   const location = useLocation();
 
+  const getMenuItems = (role) => {
+    const baseItems = [
+      { path: "/", label: "Dashboard", icon: "📊" },
+    ];
+
+    const roleSpecificItems = {
+      CEO: [
+        { path: "/upload", label: "Data Upload", icon: "📤" },
+        { path: "/cleaning", label: "Data Cleaning", icon: "🧹" },
+        { path: "/models", label: "AI Models", icon: "🤖" },
+        { path: "/visualizations", label: "Visualizations", icon: "📈" },
+        { path: "/reports", label: "Reports", icon: "📋" },
+        { path: "/roles", label: "Role Management", icon: "👥" },
+        { path: "/settings", label: "Settings", icon: "⚙️" },
+      ],
+      "Data Analyst": [
+        { path: "/upload", label: "Data Upload", icon: "📤" },
+        { path: "/cleaning", label: "Data Cleaning", icon: "🧹" },
+        { path: "/models", label: "AI Models", icon: "🤖" },
+        { path: "/visualizations", label: "Visualizations", icon: "📈" },
+        { path: "/reports", label: "Reports", icon: "📋" },
+        { path: "/settings", label: "Settings", icon: "⚙️" },
+      ],
+      "Sales Manager": [
+        { path: "/upload", label: "Data Upload", icon: "📤" },
+        { path: "/visualizations", label: "Visualizations", icon: "📈" },
+        { path: "/reports", label: "Reports", icon: "📋" },
+        { path: "/settings", label: "Settings", icon: "⚙️" },
+      ],
+      "Sector Head": [
+        { path: "/upload", label: "Data Upload", icon: "📤" },
+        { path: "/cleaning", label: "Data Cleaning", icon: "🧹" },
+        { path: "/visualizations", label: "Visualizations", icon: "📈" },
+        { path: "/reports", label: "Reports", icon: "📋" },
+        { path: "/settings", label: "Settings", icon: "⚙️" },
+      ],
+    };
+
+    return [...baseItems, ...(roleSpecificItems[role] || roleSpecificItems.CEO)];
+  };
+
+  const menuItems = getMenuItems(currentRole);
+
   return (
-    <div className="w-64 bg-gray-900 text-white h-screen fixed left-0 top-0 overflow-y-auto">
-      <div className="p-6">
-        <h2 className="text-2xl font-bold text-blue-400">SDAS</h2>
-        <p className="text-sm text-gray-400">Smart Data Analytics System</p>
+    <div className="fixed left-0 top-0 h-full w-64 bg-gray-800 border-r border-gray-700 p-4">
+      <div className="mb-8">
+        <h1 className="text-xl font-bold text-white">SDAS</h1>
+        <p className="text-gray-400 text-sm">Smart Data Analytics System</p>
+        <div className="mt-2 px-3 py-1 bg-blue-600 rounded text-xs text-white">
+          Role: {currentRole}
+        </div>
       </div>
-      <nav className="mt-6">
-        {menuItems.map((item) => {
-          const Icon = item.icon;
-          const isActive = location.pathname === item.path;
-          return (
-            <Link
-              key={item.name}
-              to={item.path}
-              className={`flex items-center px-6 py-3 text-sm font-medium transition-colors ${
-                isActive
-                  ? "bg-blue-800 text-white border-r-4 border-blue-400"
-                  : "text-gray-300 hover:bg-gray-800 hover:text-white"
-              }`}
-            >
-              <Icon className="w-5 h-5 mr-3" />
-              {item.name}
-            </Link>
-          );
-        })}
+
+      <nav className="space-y-2">
+        {menuItems.map((item) => (
+          <Link
+            key={item.path}
+            to={item.path}
+            className={`flex items-center space-x-3 px-4 py-3 rounded-lg transition-colors ${
+              location.pathname === item.path
+                ? "bg-blue-600 text-white"
+                : "text-gray-300 hover:bg-gray-700 hover:text-white"
+            }`}
+          >
+            <span className="text-lg">{item.icon}</span>
+            <span>{item.label}</span>
+          </Link>
+        ))}
       </nav>
-      <div className="absolute bottom-0 w-full p-4">
-        <button className="flex items-center w-full px-4 py-2 text-sm font-medium text-gray-300 hover:bg-gray-800 hover:text-white transition-colors">
-          <LogOut className="w-5 h-5 mr-3" />
-          Logout
-        </button>
-      </div>
     </div>
   );
 }

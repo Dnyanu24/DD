@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
 import UploadBox from "../components/UploadBox";
 import SummaryCard from "../components/SummaryCard";
 
@@ -8,15 +7,6 @@ export default function Dashboard() {
 
   return (
     <div className="p-6">
-      <div className="mb-6">
-        <Link
-          to="/advantages"
-          className="inline-block bg-blue-800 text-white px-4 py-2 rounded hover:bg-blue-900 transition-colors"
-        >
-          View SDAS Advantages
-        </Link>
-      </div>
-
       <h1 className="text-3xl font-bold mb-4 text-white">
         Smart Data Analytics System
       </h1>

@@ -16,6 +16,8 @@ import Settings from "./pages/Settings";
 export default function App() {
   const [currentRole, setCurrentRole] = useState("CEO");
 
+  const availableRoles = ["CEO", "Data Analyst", "Sales Manager", "Sector Head"];
+
   const renderDashboard = () => {
     switch (currentRole) {
       case "CEO":

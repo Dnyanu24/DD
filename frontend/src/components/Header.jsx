@@ -1,7 +1,7 @@
 import { Bell, User, ChevronDown } from "lucide-react";
 import { useState } from "react";
 
-const roles = ["CEO", "Data Analyst", "Sales Manager"];
+  const roles = ["CEO", "Data Analyst", "Sales Manager", "Sector Head"];
 
 export default function Header({ currentRole, onRoleChange }) {
   const [showDropdown, setShowDropdown] = useState(false);

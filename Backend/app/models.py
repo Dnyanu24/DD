@@ -132,7 +132,17 @@ class FeedbackLog(Base):
     feedback_data = Column(JSON, nullable=False)
     timestamp = Column(DateTime, default=datetime.utcnow)
 
+# Partitioning for RawData by sector and time
+partition_by_sector_time = DDL("""
+CREATE TABLE IF NOT EXISTS raw_data_y2023 PARTITION OF raw_data
+    FOR VALUES FROM ('2023-01-01') TO ('2024-01-01');
+CREATE TABLE IF NOT EXISTS raw_data_y2024 PARTITION OF raw_data
+    FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
+""")
+
 # Indexes for performance
 Index('idx_sector_time', RawData.sector_id, RawData.uploaded_at)
 Index('idx_cleaned_raw', CleanedData.raw_data_id)
 Index('idx_prediction_sector', AIPrediction.sector_id)
+Index('idx_feedback_user', FeedbackLog.user_id)
+Index('idx_quality_cleaned', DataQualityScore.cleaned_data_id)

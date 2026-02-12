@@ -34,4 +34,46 @@ export async function getReports() {
   const res = await fetch(`${BASE_URL}/reports/`);
   return res.json();
 }
+
+export async function getDataCleaningStats() {
+  const res = await fetch(`${BASE_URL}/analysis/cleaning-stats`);
+  return res.json();
+}
+
+export async function getUploadedData() {
+  const res = await fetch(`${BASE_URL}/upload/uploaded-data`);
+  return res.json();
+}
+
+export async function runDataCleaning(dataId, algorithm) {
+  const res = await fetch(`${BASE_URL}/analysis/clean/${dataId}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ algorithm }),
+  });
+  return res.json();
+}
+
+export async function getAIPredictions(sectorId) {
+  const res = await fetch(`${BASE_URL}/analysis/insights/${sectorId}`);
+  return res.json();
+}
+
+export async function getAIModels() {
+  const res = await fetch(`${BASE_URL}/ai/models`);
+  return res.json();
+}
+
+export async function trainAIModel(modelConfig) {
+  const res = await fetch(`${BASE_URL}/ai/train`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(modelConfig),
+  });
+  return res.json();
+}
   

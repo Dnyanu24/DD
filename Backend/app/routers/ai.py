@@ -1,19 +1,315 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session
+from typing import Optional, List
+from app.database import SessionLocal
+from app.models import AIPrediction, AIRecommendation, Sector, RawData, CleanedData, User
+from app.services.ai_predictions import AIPredictionEngine
+from app.dependencies import get_current_user, require_sector_head, require_ceo
 
 router = APIRouter()
 
-@router.get("/predict")
-def predict():
-    return {"prediction": "Sales likely to increase next quarter"}
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
-@router.get("/recommend")
-def recommend():
-    return {"recommendation": "Focus on high-performing clusters"}
+@router.post("/predict/sales")
+async def predict_sales(
+    sector_id: int,
+    target_column: str,
+    periods: int = 12,
+    method: str = "arima",
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_sector_head)
+):
+    """Generate sales/demand forecasting predictions"""
 
-@router.get("/risk")
-def detect_risk():
-    return {"risk": "Anomaly detected in recent data"}
+    if current_user.role == 'sector_head' and current_user.sector_id != sector_id:
+        raise HTTPException(status_code=403, detail="Access denied")
 
-@router.get("/summary")
-def summary():
-    return {"summary": "Overall performance is stable with minor risks"}
+    # Get cleaned data for the sector
+    cleaned_data = db.query(CleanedData)\
+        .join(RawData)\
+        .filter(RawData.sector_id == sector_id)\
+        .order_by(CleanedData.cleaned_at.desc())\
+        .first()
+
+    if not cleaned_data:
+        raise HTTPException(status_code=404, detail="No cleaned data available for prediction")
+
+    import pandas as pd
+    df = pd.DataFrame(cleaned_data.cleaned_data)
+
+    if target_column not in df.columns:
+        raise HTTPException(status_code=400, detail=f"Target column '{target_column}' not found")
+
+    # Generate prediction
+    ai_engine = AIPredictionEngine()
+    result = ai_engine.forecast_sales(df, target_column, periods, method)
+
+    # Store prediction in database
+    prediction_entry = AIPrediction(
+        sector_id=sector_id,
+        prediction_type='sales_forecast',
+        prediction_data=result,
+        confidence=result.get('confidence', 0.5)
+    )
+    db.add(prediction_entry)
+    db.commit()
+    db.refresh(prediction_entry)
+
+    return {
+        "prediction_id": prediction_entry.id,
+        "forecast": result.get('forecast', []),
+        "confidence": result.get('confidence', 0.5),
+        "method": method,
+        "periods": periods
+    }
+
+@router.post("/predict/anomalies")
+async def detect_anomalies(
+    sector_id: int,
+    target_column: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_sector_head)
+):
+    """Detect trends and anomalies in data"""
+
+    if current_user.role == 'sector_head' and current_user.sector_id != sector_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    # Get cleaned data
+    cleaned_data = db.query(CleanedData)\
+        .join(RawData)\
+        .filter(RawData.sector_id == sector_id)\
+        .order_by(CleanedData.cleaned_at.desc())\
+        .first()
+
+    if not cleaned_data:
+        raise HTTPException(status_code=404, detail="No cleaned data available")
+
+    import pandas as pd
+    df = pd.DataFrame(cleaned_data.cleaned_data)
+
+    ai_engine = AIPredictionEngine()
+    result = ai_engine.detect_trends_anomalies(df, target_column)
+
+    # Store prediction
+    prediction_entry = AIPrediction(
+        sector_id=sector_id,
+        prediction_type='anomaly_detection',
+        prediction_data=result,
+        confidence=result.get('confidence', 0.8)
+    )
+    db.add(prediction_entry)
+    db.commit()
+
+    return result
+
+@router.post("/predict/risk")
+async def predict_risk(
+    sector_id: int,
+    features: List[str],
+    target_column: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_sector_head)
+):
+    """Predict risk using machine learning"""
+
+    if current_user.role == 'sector_head' and current_user.sector_id != sector_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    # Get cleaned data
+    cleaned_data = db.query(CleanedData)\
+        .join(RawData)\
+        .filter(RawData.sector_id == sector_id)\
+        .order_by(CleanedData.cleaned_at.desc())\
+        .first()
+
+    if not cleaned_data:
+        raise HTTPException(status_code=404, detail="No cleaned data available")
+
+    import pandas as pd
+    df = pd.DataFrame(cleaned_data.cleaned_data)
+
+    ai_engine = AIPredictionEngine()
+    result = ai_engine.predict_risk(df, features, target_column)
+
+    # Store prediction
+    prediction_entry = AIPrediction(
+        sector_id=sector_id,
+        prediction_type='risk_prediction',
+        prediction_data=result,
+        confidence=result.get('confidence', 0.5)
+    )
+    db.add(prediction_entry)
+    db.commit()
+
+    return result
+
+@router.post("/recommend")
+async def generate_recommendations(
+    sector_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_sector_head)
+):
+    """Generate AI-powered recommendations based on recent predictions"""
+
+    if current_user.role == 'sector_head' and current_user.sector_id != sector_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    # Get recent predictions for the sector
+    recent_predictions = db.query(AIPrediction)\
+        .filter(AIPrediction.sector_id == sector_id)\
+        .order_by(AIPrediction.predicted_at.desc())\
+        .limit(5)\
+        .all()
+
+    if not recent_predictions:
+        return {"recommendations": [], "message": "No recent predictions available"}
+
+    # Extract prediction data for recommendation engine
+    predictions_data = {}
+    for pred in recent_predictions:
+        predictions_data[pred.prediction_type] = pred.prediction_data
+
+    # Get context data (current averages, etc.)
+    context = {"current_average": 1000, "sector_id": sector_id}  # Placeholder
+
+    ai_engine = AIPredictionEngine()
+    recommendations = ai_engine.generate_recommendations(predictions_data, context)
+
+    # Store recommendations
+    prediction_id = recent_predictions[0].id if recent_predictions else None
+    if prediction_id:
+        for i, rec in enumerate(recommendations.get('recommendations', [])):
+            rec_entry = AIRecommendation(
+                prediction_id=prediction_id,
+                recommendation_text=rec,
+                explanation=recommendations.get('explanations', [])[i] if i < len(recommendations.get('explanations', [])) else ""
+            )
+            db.add(rec_entry)
+        db.commit()
+
+    return recommendations
+
+@router.get("/rank-sectors")
+async def rank_sectors(
+    metrics: List[str] = Query(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_ceo)
+):
+    """Rank sectors based on performance metrics"""
+
+    # Get all sectors and their data
+    sectors = db.query(Sector).all()
+    sector_data = {}
+
+    for sector in sectors:
+        # Get cleaned data for each sector
+        cleaned_data = db.query(CleanedData)\
+            .join(RawData)\
+            .filter(RawData.sector_id == sector.id)\
+            .order_by(CleanedData.cleaned_at.desc())\
+            .first()
+
+        if cleaned_data:
+            import pandas as pd
+            df = pd.DataFrame(cleaned_data.cleaned_data)
+            sector_data[sector.name] = df
+
+    if not sector_data:
+        raise HTTPException(status_code=404, detail="No data available for ranking")
+
+    ai_engine = AIPredictionEngine()
+    ranking_result = ai_engine.rank_sectors(sector_data, metrics)
+
+    return ranking_result
+
+@router.post("/nl-query")
+async def process_nl_query(
+    query: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Process natural language queries about data insights"""
+
+    # Get available data based on user role
+    available_data = {}
+    if current_user.role == 'sector_head':
+        sector_data = db.query(CleanedData)\
+            .join(RawData)\
+            .filter(RawData.sector_id == current_user.sector_id)\
+            .order_by(CleanedData.cleaned_at.desc())\
+            .first()
+        if sector_data:
+            available_data['sector_data'] = sector_data.cleaned_data
+    elif current_user.role == 'ceo':
+        # Company-wide data summary
+        available_data['company_summary'] = {
+            'total_sectors': db.query(Sector).count(),
+            'total_predictions': db.query(AIPrediction).count()
+        }
+
+    ai_engine = AIPredictionEngine()
+    result = ai_engine.process_nl_query(query, available_data)
+
+    return result
+
+@router.get("/predictions/{sector_id}")
+async def get_predictions(
+    sector_id: int,
+    limit: int = 10,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_sector_head)
+):
+    """Get prediction history for a sector"""
+
+    if current_user.role == 'sector_head' and current_user.sector_id != sector_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    predictions = db.query(AIPrediction)\
+        .filter(AIPrediction.sector_id == sector_id)\
+        .order_by(AIPrediction.predicted_at.desc())\
+        .limit(limit)\
+        .all()
+
+    return [
+        {
+            "id": pred.id,
+            "type": pred.prediction_type,
+            "data": pred.prediction_data,
+            "confidence": pred.confidence,
+            "predicted_at": pred.predicted_at.isoformat()
+        } for pred in predictions
+    ]
+
+@router.get("/recommendations/{sector_id}")
+async def get_recommendations(
+    sector_id: int,
+    limit: int = 10,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_sector_head)
+):
+    """Get AI recommendations for a sector"""
+
+    if current_user.role == 'sector_head' and current_user.sector_id != sector_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    recommendations = db.query(AIRecommendation)\
+        .join(AIPrediction)\
+        .filter(AIPrediction.sector_id == sector_id)\
+        .order_by(AIRecommendation.created_at.desc())\
+        .limit(limit)\
+        .all()
+
+    return [
+        {
+            "id": rec.id,
+            "recommendation": rec.recommendation_text,
+            "explanation": rec.explanation,
+            "created_at": rec.created_at.isoformat()
+        } for rec in recommendations
+    ]

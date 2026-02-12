@@ -450,3 +450,17 @@ export default function Settings() {
                 Reset to Defaults
               </button>
               <button className="w-full bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm text-gray-300 transition-colors">
+                Export Settings
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Settings Content */}
+        <div className="lg:col-span-3">
+          {renderTabContent()}
+        </div>
+      </div>
+    </div>
+  );
+}
