@@ -29,14 +29,7 @@ export default function RoleManagement() {
       users: 5,
       status: "Active"
     },
-    {
-      id: "admin",
-      name: "Admin",
-      description: "System administration and user management",
-      permissions: ["Manage users", "Configure system", "Monitor health", "Access all logs"],
-      users: 1,
-      status: "Active"
-    }
+
   ];
 
   const userMetrics = [

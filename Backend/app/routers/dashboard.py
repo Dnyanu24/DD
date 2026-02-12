@@ -192,6 +192,30 @@ async def get_admin_dashboard(user: User, db: Session) -> Dict[str, Any]:
         ]
     }
 
+@router.get("/admin/quick-stats")
+async def get_admin_quick_stats(current_user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """Get quick stats for admin sidebar"""
+
+    # New users (users created in last 30 days)
+    from datetime import datetime, timedelta
+    thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+    new_users = db.query(func.count(User.id))\
+        .filter(User.created_at >= thirty_days_ago).scalar()
+
+    # Pending reports (assuming reports that are not processed or something - using recent reports)
+    pending_reports = db.query(func.count(FeedbackLog.id))\
+        .filter(FeedbackLog.feedback_type == 'correction').scalar()
+
+    # System alerts (recent feedback logs)
+    system_alerts = db.query(func.count(FeedbackLog.id))\
+        .filter(FeedbackLog.timestamp >= thirty_days_ago).scalar()
+
+    return {
+        "pendingReports": pending_reports,
+        "newUsers": new_users,
+        "systemAlerts": system_alerts
+    }
+
 @router.post("/feedback")
 async def submit_feedback(
     data_id: int,
