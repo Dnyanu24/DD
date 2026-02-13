@@ -204,227 +204,195 @@ export default function DataCleaning() {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        {/* Uploaded Data List */}
-        <div className="bg-gray-800 p-6 rounded-lg shadow-lg border border-gray-700">
-          <h3 className="text-lg font-semibold text-white mb-4">Uploaded Data</h3>
-          {isLoading ? (
-            <div className="text-center py-8">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
-              <p className="text-gray-400">Loading datasets...</p>
-            </div>
-          ) : (
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Left Column - Data Management */}
+        <div className="space-y-6">
+          {/* Uploaded Data List */}
+          <div className="bg-gray-800 p-6 rounded-lg shadow-lg border border-gray-700">
+            <h3 className="text-lg font-semibold text-white mb-4">Uploaded Data</h3>
+            {isLoading ? (
+              <div className="text-center py-8">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
+                <p className="text-gray-400">Loading datasets...</p>
+              </div>
+            ) : (
+              <div className="space-y-3 max-h-80 overflow-y-auto">
+                {uploadedData.map((dataset) => (
+                  <div
+                    key={dataset.id}
+                    onClick={() => setSelectedDataset(dataset)}
+                    className={`p-4 rounded-lg cursor-pointer transition-colors ${
+                      selectedDataset?.id === dataset.id
+                        ? "bg-blue-600 text-white"
+                        : "bg-gray-700 text-gray-300 hover:bg-gray-600"
+                    }`}
+                  >
+                    <div className="flex justify-between items-start mb-2">
+                      <h4 className="font-medium text-sm truncate">{dataset.name}</h4>
+                      <span className={`px-2 py-1 rounded text-xs ${
+                        dataset.status === "Cleaned" ? "bg-green-600" :
+                        dataset.status === "Processing" ? "bg-yellow-600" : "bg-gray-600"
+                      }`}>
+                        {dataset.status}
+                      </span>
+                    </div>
+                    <div className="text-xs opacity-80 mb-1">{dataset.sector}</div>
+                    <div className="text-xs opacity-60">
+                      {dataset.records.toLocaleString()} records • {dataset.qualityScore}% quality
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Dataset Details */}
+          <div className="bg-gray-800 p-6 rounded-lg shadow-lg border border-gray-700">
+            <h3 className="text-lg font-semibold text-white mb-4">Dataset Details</h3>
+            {selectedDataset ? (
+              <div className="space-y-4">
+                <div>
+                  <h4 className="font-medium text-white mb-2">{selectedDataset.name}</h4>
+                  <div className="grid grid-cols-2 gap-2 text-sm mb-4">
+                    <div>
+                      <span className="text-gray-400">Sector:</span>
+                      <span className="text-white ml-1">{selectedDataset.sector}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400">Records:</span>
+                      <span className="text-white ml-1">{selectedDataset.records.toLocaleString()}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400">Quality:</span>
+                      <span className="text-white ml-1">{selectedDataset.qualityScore}%</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400">Status:</span>
+                      <span className={`ml-1 px-2 py-0.5 rounded text-xs ${
+                        selectedDataset.status === "Cleaned" ? "bg-green-600" :
+                        selectedDataset.status === "Processing" ? "bg-yellow-600" : "bg-gray-600"
+                      }`}>
+                        {selectedDataset.status}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-gray-700 p-3 rounded">
+                  <h5 className="text-white font-medium mb-2 text-sm">Columns ({selectedDataset.columns.length})</h5>
+                  <div className="flex flex-wrap gap-1">
+                    {selectedDataset.columns.map((column, index) => (
+                      <span key={index} className="bg-gray-600 text-gray-300 px-2 py-1 rounded text-xs">
+                        {column}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-8 text-gray-400">
+                <p>Select a dataset</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Middle Column - Algorithms */}
+        <div className="space-y-6">
+          {/* Algorithms List */}
+          <div className="bg-gray-800 p-6 rounded-lg shadow-lg border border-gray-700">
+            <h3 className="text-lg font-semibold text-white mb-4">Cleaning Algorithms</h3>
             <div className="space-y-3 max-h-96 overflow-y-auto">
-              {uploadedData.map((dataset) => (
+              {algorithms.map((algo) => (
                 <div
-                  key={dataset.id}
-                  onClick={() => setSelectedDataset(dataset)}
-                  className={`p-4 rounded-lg cursor-pointer transition-colors ${
-                    selectedDataset?.id === dataset.id
+                  key={algo.id}
+                  onClick={() => setSelectedAlgorithm(algo.id)}
+                  className={`p-3 rounded-lg cursor-pointer transition-colors ${
+                    selectedAlgorithm === algo.id
                       ? "bg-blue-600 text-white"
                       : "bg-gray-700 text-gray-300 hover:bg-gray-600"
                   }`}
                 >
-                  <div className="flex justify-between items-start mb-2">
-                    <h4 className="font-medium text-sm truncate">{dataset.name}</h4>
-                    <span className={`px-2 py-1 rounded text-xs ${
-                      dataset.status === "Cleaned" ? "bg-green-600" :
-                      dataset.status === "Processing" ? "bg-yellow-600" : "bg-gray-600"
+                  <div className="flex justify-between items-start mb-1">
+                    <h4 className="font-medium text-sm">{algo.name}</h4>
+                    <span className={`px-2 py-0.5 rounded text-xs ${
+                      algo.status === "Active" ? "bg-green-600" : "bg-yellow-600"
                     }`}>
-                      {dataset.status}
+                      {algo.status}
                     </span>
                   </div>
-                  <div className="text-xs opacity-80 mb-1">{dataset.sector}</div>
-                  <div className="text-xs opacity-60">
-                    {dataset.records.toLocaleString()} records • {dataset.qualityScore}% quality
-                  </div>
-                  <div className="text-xs opacity-60 mt-1">
-                    Uploaded: {new Date(dataset.uploadDate).toLocaleDateString()}
-                  </div>
+                  <p className="text-xs opacity-80">{algo.description}</p>
                 </div>
               ))}
             </div>
-          )}
-        </div>
+          </div>
 
-        {/* Dataset Details */}
-        <div className="bg-gray-800 p-6 rounded-lg shadow-lg border border-gray-700">
-          <h3 className="text-lg font-semibold text-white mb-4">Dataset Details</h3>
-          {selectedDataset ? (
-            <div className="space-y-4">
-              <div>
-                <h4 className="font-medium text-white mb-2">{selectedDataset.name}</h4>
-                <div className="grid grid-cols-2 gap-4 text-sm mb-4">
-                  <div>
-                    <span className="text-gray-400">Sector:</span>
-                    <span className="text-white ml-2">{selectedDataset.sector}</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-400">Records:</span>
-                    <span className="text-white ml-2">{selectedDataset.records.toLocaleString()}</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-400">Quality:</span>
-                    <span className="text-white ml-2">{selectedDataset.qualityScore}%</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-400">Status:</span>
-                    <span className={`ml-2 px-2 py-1 rounded text-xs ${
-                      selectedDataset.status === "Cleaned" ? "bg-green-600" :
-                      selectedDataset.status === "Processing" ? "bg-yellow-600" : "bg-gray-600"
-                    }`}>
-                      {selectedDataset.status}
-                    </span>
-                  </div>
-                </div>
-              </div>
+          {/* Algorithm Details */}
+          <div className="bg-gray-800 p-6 rounded-lg shadow-lg border border-gray-700">
+            <h3 className="text-lg font-semibold text-white mb-4">Algorithm Details</h3>
+            {selectedAlgorithm && (
+              <div className="space-y-3">
+                {(() => {
+                  const algo = algorithms.find(a => a.id === selectedAlgorithm);
+                  return (
+                    <>
+                      <div>
+                        <h4 className="font-medium text-white mb-1">{algo.name}</h4>
+                        <p className="text-gray-300 text-xs">{algo.description}</p>
+                      </div>
 
-              <div className="bg-gray-700 p-3 rounded">
-                <h5 className="text-white font-medium mb-2 text-sm">Columns ({selectedDataset.columns.length})</h5>
-                <div className="flex flex-wrap gap-1">
-                  {selectedDataset.columns.map((column, index) => (
-                    <span key={index} className="bg-gray-600 text-gray-300 px-2 py-1 rounded text-xs">
-                      {column}
-                    </span>
-                  ))}
-                </div>
-              </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="bg-gray-700 p-2 rounded">
+                          <div className="text-xs text-gray-400">Accuracy</div>
+                          <div className="text-sm font-bold text-white">{algo.accuracy}</div>
+                        </div>
+                        <div className="bg-gray-700 p-2 rounded">
+                          <div className="text-xs text-gray-400">Status</div>
+                          <div className="text-sm font-bold text-green-400">{algo.status}</div>
+                        </div>
+                      </div>
 
-              <div className="bg-gray-700 p-3 rounded">
-                <h5 className="text-white font-medium mb-2 text-sm">Data Preview</h5>
-                <div className="text-xs text-gray-300 space-y-1">
-                  <div>Sample records from database:</div>
-                  <div className="bg-gray-600 p-2 rounded mt-2 font-mono text-xs">
-                    {selectedDataset.columns.slice(0, 3).map(col => `${col}: ...`).join(', ')}
-                  </div>
-                </div>
+                      <div className="flex space-x-2">
+                        <button className="flex-1 bg-blue-600 hover:bg-blue-700 px-3 py-2 rounded-lg transition-colors text-sm">
+                          Run Algorithm
+                        </button>
+                        <button className="flex-1 bg-gray-600 hover:bg-gray-500 px-3 py-2 rounded-lg transition-colors text-sm">
+                          Configure
+                        </button>
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
-            </div>
-          ) : (
-            <div className="text-center py-8 text-gray-400">
-              <p>Select a dataset to view details</p>
-            </div>
-          )}
-        </div>
-
-        {/* Algorithms List */}
-        <div className="bg-gray-800 p-6 rounded-lg shadow-lg border border-gray-700">
-          <h3 className="text-lg font-semibold text-white mb-4">Cleaning Algorithms</h3>
-          <div className="space-y-3 max-h-96 overflow-y-auto">
-            {algorithms.map((algo) => (
-              <div
-                key={algo.id}
-                onClick={() => setSelectedAlgorithm(algo.id)}
-                className={`p-4 rounded-lg cursor-pointer transition-colors ${
-                  selectedAlgorithm === algo.id
-                    ? "bg-blue-600 text-white"
-                    : "bg-gray-700 text-gray-300 hover:bg-gray-600"
-                }`}
-              >
-                <div className="flex justify-between items-start mb-2">
-                  <h4 className="font-medium text-sm">{algo.name}</h4>
-                  <span className={`px-2 py-1 rounded text-xs ${
-                    algo.status === "Active" ? "bg-green-600" : "bg-yellow-600"
-                  }`}>
-                    {algo.status}
-                  </span>
-                </div>
-                <p className="text-xs opacity-80 mb-2">{algo.description}</p>
-                <div className="text-xs opacity-60">
-                  Accuracy: {algo.accuracy}
-                </div>
-              </div>
-            ))}
+            )}
           </div>
         </div>
 
-        {/* Algorithm Details */}
-        <div className="bg-gray-800 p-6 rounded-lg shadow-lg border border-gray-700">
-          <h3 className="text-lg font-semibold text-white mb-4">Algorithm Details</h3>
-          {selectedAlgorithm && (
-            <div className="space-y-4">
-              {(() => {
-                const algo = algorithms.find(a => a.id === selectedAlgorithm);
-                return (
-                  <>
-                    <div>
-                      <h4 className="font-medium text-white mb-2">{algo.name}</h4>
-                      <p className="text-gray-300 text-sm mb-4">{algo.description}</p>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="bg-gray-700 p-3 rounded">
-                        <div className="text-xs text-gray-400">Accuracy</div>
-                        <div className="text-lg font-bold text-white">{algo.accuracy}</div>
-                      </div>
-                      <div className="bg-gray-700 p-3 rounded">
-                        <div className="text-xs text-gray-400">Status</div>
-                        <div className={`text-lg font-bold ${
-                          algo.status === "Active" ? "text-green-400" : "text-yellow-400"
-                        }`}>
-                          {algo.status}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="bg-gray-700 p-4 rounded">
-                      <h5 className="text-white font-medium mb-2">Performance Metrics</h5>
-                      <div className="space-y-2 text-sm">
-                        <div className="flex justify-between">
-                          <span className="text-gray-300">Processing Speed:</span>
-                          <span className="text-white">1.2s per 1K records</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-300">Memory Usage:</span>
-                          <span className="text-white">45 MB</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-300">Last Updated:</span>
-                          <span className="text-white">2 hours ago</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex space-x-2">
-                      <button className="flex-1 bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg transition-colors">
-                        Run Algorithm
-                      </button>
-                      <button className="flex-1 bg-gray-600 hover:bg-gray-500 px-4 py-2 rounded-lg transition-colors">
-                        Configure
-                      </button>
-                    </div>
-                  </>
-                );
-              })()}
+        {/* Right Column - Activity */}
+        <div className="space-y-6">
+          {/* Recent Activity */}
+          <div className="bg-gray-800 p-6 rounded-lg shadow-lg border border-gray-700">
+            <h3 className="text-lg font-semibold text-white mb-4">Recent Activity</h3>
+            <div className="space-y-3 max-h-64 overflow-y-auto">
+              {recentActivity.map((activity, index) => (
+                <div key={index} className="bg-gray-700 p-3 rounded">
+                  <div className="text-sm text-white mb-1">{activity.action}</div>
+                  <div className="text-xs text-gray-400">{activity.algorithm}</div>
+                  <div className="text-xs text-gray-500">{activity.time}</div>
+                </div>
+              ))}
             </div>
-          )}
-        </div>
 
-        {/* Recent Activity */}
-        <div className="bg-gray-800 p-6 rounded-lg shadow-lg border border-gray-700">
-          <h3 className="text-lg font-semibold text-white mb-4">Recent Activity</h3>
-          <div className="space-y-3 max-h-96 overflow-y-auto">
-            {recentActivity.map((activity, index) => (
-              <div key={index} className="bg-gray-700 p-3 rounded">
-                <div className="text-sm text-white mb-1">{activity.action}</div>
-                <div className="text-xs text-gray-400 mb-1">{activity.algorithm}</div>
-                <div className="text-xs text-gray-500">{activity.time}</div>
+            <div className="mt-4 pt-4 border-t border-gray-600">
+              <h4 className="text-white font-medium mb-3 text-sm">Quick Actions</h4>
+              <div className="space-y-2">
+                <button className="w-full bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm text-gray-300 transition-colors">
+                  Run All Algorithms
+                </button>
+                <button className="w-full bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm text-gray-300 transition-colors">
+                  View Quality Report
+                </button>
               </div>
-            ))}
-          </div>
-
-          <div className="mt-4 pt-4 border-t border-gray-600">
-            <h4 className="text-white font-medium mb-3">Quick Actions</h4>
-            <div className="space-y-2">
-              <button className="w-full bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm text-gray-300 transition-colors">
-                Run All Algorithms
-              </button>
-              <button className="w-full bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm text-gray-300 transition-colors">
-                View Quality Report
-              </button>
-              <button className="w-full bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm text-gray-300 transition-colors">
-                Export Logs
-              </button>
             </div>
           </div>
         </div>
