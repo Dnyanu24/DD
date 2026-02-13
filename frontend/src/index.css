@@ -122,8 +122,80 @@
   background: var(--accent-hover);
 }
 
-/* Focus ring for accessibility */
+/* Focus ring for accessibility - Light mode only */
 *:focus-visible {
   outline: 2px solid var(--accent-primary);
   outline-offset: 2px;
+}
+
+/* Dark mode - No outlines */
+.dark *:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-primary);
+}
+
+/* Modern Graph Styles */
+.dark .recharts-cartesian-grid-horizontal line,
+.dark .recharts-cartesian-grid-vertical line {
+  stroke: rgba(148, 163, 184, 0.1);
+  stroke-dasharray: none;
+}
+
+.dark .recharts-tooltip-wrapper {
+  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.5));
+}
+
+/* Modern Card Styles - No borders, subtle glow */
+.dark .bg-theme-card {
+  border: none !important;
+  box-shadow: 0 4px 20px -4px rgba(20, 184, 166, 0.1);
+}
+
+/* Modern Sidebar - No border */
+.dark .bg-theme-sidebar {
+  border-right: none !important;
+  box-shadow: 4px 0 24px -4px rgba(0, 0, 0, 0.3);
+}
+
+/* Modern Header - No border */
+.dark .bg-theme-header {
+  border-bottom: none !important;
+  box-shadow: 0 4px 20px -4px rgba(0, 0, 0, 0.2);
+}
+
+/* Input fields - No borders in dark mode */
+.dark input,
+.dark select,
+.dark textarea {
+  border: none !important;
+  background: rgba(30, 37, 56, 0.8);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Buttons - Modern glow effect */
+.dark button.accent-primary,
+.dark .accent-primary {
+  box-shadow: 0 0 20px -4px rgba(20, 184, 166, 0.4);
+  border: none !important;
+}
+
+/* Navigation items - No borders */
+.dark nav a,
+.dark .nav-item {
+  border: none !important;
+}
+
+/* Table styles - No borders */
+.dark table,
+.dark th,
+.dark td {
+  border: none !important;
+}
+
+/* Divider lines - Subtle instead of borders */
+.dark hr,
+.dark .divider {
+  border: none;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(148, 163, 184, 0.2), transparent);
 }

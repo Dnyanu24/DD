@@ -20,6 +20,17 @@ const marketShareData = [
   { name: "Others", value: 20, color: "#5EEAD4" },
 ];
 
+// Modern chart colors with glow effect
+const chartColors = {
+  primary: "#14B8A6",
+  secondary: "#0D9488",
+  tertiary: "#2DD4BF",
+  quaternary: "#5EEAD4",
+  grid: "rgba(148, 163, 184, 0.1)",
+  text: "#94A3B8"
+};
+
+
 
 
 export default function CEODashboard() {
@@ -46,27 +57,51 @@ export default function CEODashboard() {
       {/* Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Strategic Trend Analysis */}
-        <div className="bg-theme-card p-6 rounded-lg shadow-lg border border-theme-medium transition-colors duration-300">
+        <div className="bg-theme-card p-6 rounded-2xl shadow-lg transition-colors duration-300">
           <h3 className="text-lg font-semibold text-theme-primary mb-4">Strategic Trend Analysis</h3>
           <ResponsiveContainer width="100%" height={300}>
             <LineChart data={trendData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border-medium)" />
-              <XAxis dataKey="month" stroke="var(--text-muted)" />
-              <YAxis stroke="var(--text-muted)" />
-              <Tooltip
-                contentStyle={{ backgroundColor: "var(--bg-card)", border: "1px solid var(--border-medium)", borderRadius: "8px" }}
-                labelStyle={{ color: "var(--text-primary)" }}
-                itemStyle={{ color: "var(--text-secondary)" }}
+              <CartesianGrid stroke={chartColors.grid} strokeDasharray="none" vertical={false} />
+              <XAxis 
+                dataKey="month" 
+                stroke={chartColors.text} 
+                tick={{ fill: chartColors.text, fontSize: 12 }}
+                axisLine={false}
+                tickLine={false}
               />
-              <Line type="monotone" dataKey="revenue" stroke="#14B8A6" strokeWidth={2} />
-
+              <YAxis 
+                stroke={chartColors.text} 
+                tick={{ fill: chartColors.text, fontSize: 12 }}
+                axisLine={false}
+                tickLine={false}
+                tickFormatter={(value) => `$${value/1000}k`}
+              />
+              <Tooltip
+                contentStyle={{ 
+                  backgroundColor: "var(--bg-secondary)", 
+                  border: "none", 
+                  borderRadius: "12px",
+                  boxShadow: "0 4px 20px rgba(0,0,0,0.3)"
+                }}
+                labelStyle={{ color: "var(--text-primary)", fontWeight: 600 }}
+                itemStyle={{ color: chartColors.primary }}
+              />
+              <Line 
+                type="monotone" 
+                dataKey="revenue" 
+                stroke={chartColors.primary} 
+                strokeWidth={3}
+                dot={{ fill: chartColors.primary, strokeWidth: 0, r: 4 }}
+                activeDot={{ r: 6, fill: chartColors.primary, stroke: "#fff", strokeWidth: 2 }}
+              />
             </LineChart>
           </ResponsiveContainer>
         </div>
 
 
+
         {/* Market Share */}
-        <div className="bg-theme-card p-6 rounded-lg shadow-lg border border-theme-medium transition-colors duration-300">
+        <div className="bg-theme-card p-6 rounded-2xl shadow-lg transition-colors duration-300">
           <h3 className="text-lg font-semibold text-theme-primary mb-4">Market Share</h3>
           <ResponsiveContainer width="100%" height={300}>
             <PieChart>
@@ -74,29 +109,44 @@ export default function CEODashboard() {
                 data={marketShareData}
                 cx="50%"
                 cy="50%"
+                innerRadius={60}
                 outerRadius={100}
+                paddingAngle={3}
                 dataKey="value"
                 label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                labelStyle={{ fill: "var(--text-secondary)", fontSize: 12 }}
               >
                 {marketShareData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={entry.color} />
+                  <Cell 
+                    key={`cell-${index}`} 
+                    fill={entry.color}
+                    stroke="var(--bg-card)"
+                    strokeWidth={3}
+                  />
                 ))}
               </Pie>
               <Tooltip 
-                contentStyle={{ backgroundColor: "var(--bg-card)", border: "1px solid var(--border-medium)", borderRadius: "8px" }}
-                labelStyle={{ color: "var(--text-primary)" }}
+                contentStyle={{ 
+                  backgroundColor: "var(--bg-secondary)", 
+                  border: "none", 
+                  borderRadius: "12px",
+                  boxShadow: "0 4px 20px rgba(0,0,0,0.3)"
+                }}
+                labelStyle={{ color: "var(--text-primary)", fontWeight: 600 }}
                 itemStyle={{ color: "var(--text-secondary)" }}
               />
             </PieChart>
           </ResponsiveContainer>
         </div>
 
+
       </div>
 
       {/* Bottom Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Risk & Anomaly Alerts */}
-        <div className="bg-theme-card p-6 rounded-lg shadow-lg border border-theme-medium transition-colors duration-300">
+        <div className="bg-theme-card p-6 rounded-2xl shadow-lg transition-colors duration-300">
+
           <h3 className="text-lg font-semibold text-theme-primary mb-4">Risk & Anomaly Alerts</h3>
           <div className="space-y-3">
             {alerts.map((alert) => (
@@ -116,7 +166,8 @@ export default function CEODashboard() {
 
 
         {/* Executive Summary */}
-        <div className="bg-theme-card p-6 rounded-lg shadow-lg border border-theme-medium transition-colors duration-300">
+        <div className="bg-theme-card p-6 rounded-2xl shadow-lg transition-colors duration-300">
+
           <h3 className="text-lg font-semibold text-theme-primary mb-4">Executive Summary</h3>
           <div className="text-sm text-theme-secondary space-y-2">
             <p>• Revenue growth trajectory remains strong with 7.9% monthly increase</p>
