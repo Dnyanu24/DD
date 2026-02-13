@@ -1,21 +1,62 @@
-# TODO - SDAS Project Tasks
+# White and Blue-Green Theme + Authentication - COMPLETED ✅
 
-## 1. Backend Error Fix
-- [ ] The backend error is `ModuleNotFoundError: No module named 'jose'`
-- [ ] User needs to run: `pip install -r Backend/requirements.txt`
+## ✅ Completed Features
 
-## 2. Railway Deployment Configuration
-- [ ] Update railway.json to properly configure both frontend and backend
-- [ ] Add proper build and start commands
+### 1. White and Blue-Green Theme
+- CSS variables in `index.css` with teal/blue-green palette
+- Tailwind config updated with new colors
+- All dashboard pages use blue-green chart colors
+- Theme toggle in header (sun/moon icons)
 
-## 3. Frontend Icon and Title
-- [ ] Update frontend/index.html to remove vite icon
-- [ ] Change title from "frontend" to "SDAS - Smart Data Analytics System"
+### 2. Signup Page
+- **File**: `frontend/src/pages/Signup.jsx`
+- Fields: Username, Email, Password, Confirm Password, Role selection
+- Role options: CEO, Data Analyst, Sales Manager, Sector Head
+- Form validation with clear error messages
+- Success message and auto-redirect to login
+- **FIXED**: Error handling now properly displays error messages
 
-## 4. White and Dark Clay Theme
-- [ ] Update frontend/tailwind.config.js with custom colors
-- [ ] Update frontend/src/index.css with theme styles
+### 3. Login Page
+- **File**: `frontend/src/pages/Login.jsx`
+- "Forgot your password?" link
+- "Sign up now" link for new users
+- **FIXED**: Success message from signup is displayed
+- **FIXED**: Username is pre-filled after successful signup
+- Demo credentials hint: admin / admin123
 
-## 5. Additional Backend Fixes
-- [ ] Fix DDL partitioning issue in models.py (PostgreSQL-specific)
-- [ ] Ensure all dependencies are properly specified
+### 4. Logout Button
+- **Location**: Header component, next to user profile
+- Red hover effect for visibility
+- Clears localStorage and redirects to login
+
+### 5. API Error Handling
+- **File**: `frontend/src/services/api.js`
+- **FIXED**: Proper error extraction from API responses
+- **FIXED**: Network error handling
+- **FIXED**: Error messages are properly passed to components
+
+### 6. SQLite Database Storage
+- Backend uses SQLite (`Backend/data.db`)
+- User registration stores data via SQLAlchemy
+- Passwords are hashed before storage
+
+## User Flow:
+1. User clicks "Sign up" on login page
+2. User fills registration form and submits
+3. On success: Shows success message, redirects to login
+4. Login page shows success message and pre-fills username
+5. User enters password and logs in
+6. User can logout using logout button in header
+
+## How to Run:
+```bash
+# Backend (Terminal 1)
+cd Backend
+uvicorn app.main:app --reload
+
+# Frontend (Terminal 2)  
+cd frontend
+npm run dev
+```
+
+Access at http://localhost:5173

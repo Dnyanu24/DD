@@ -14,11 +14,13 @@ const trendData = [
 ];
 
 const marketShareData = [
-  { name: "SDAS", value: 35, color: "#3B82F6" },
-  { name: "Competitor A", value: 25, color: "#10B981" },
-  { name: "Competitor B", value: 20, color: "#F59E0B" },
-  { name: "Others", value: 20, color: "#EF4444" },
+  { name: "SDAS", value: 35, color: "#14B8A6" },
+  { name: "Competitor A", value: 25, color: "#0D9488" },
+  { name: "Competitor B", value: 20, color: "#2DD4BF" },
+  { name: "Others", value: 20, color: "#5EEAD4" },
 ];
+
+
 
 export default function CEODashboard() {
   const [alerts] = useState([
@@ -28,7 +30,8 @@ export default function CEODashboard() {
   ]);
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="space-y-6">
+
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <KPICard title="Total Revenue" value="$1.2M" change="+12.5%" changeType="positive" />
@@ -43,25 +46,28 @@ export default function CEODashboard() {
       {/* Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Strategic Trend Analysis */}
-        <div className="bg-gray-800 p-6 rounded-lg shadow-lg border border-gray-700">
-          <h3 className="text-lg font-semibold text-white mb-4">Strategic Trend Analysis</h3>
+        <div className="bg-theme-card p-6 rounded-lg shadow-lg border border-theme-medium transition-colors duration-300">
+          <h3 className="text-lg font-semibold text-theme-primary mb-4">Strategic Trend Analysis</h3>
           <ResponsiveContainer width="100%" height={300}>
             <LineChart data={trendData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-              <XAxis dataKey="month" stroke="#9CA3AF" />
-              <YAxis stroke="#9CA3AF" />
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border-medium)" />
+              <XAxis dataKey="month" stroke="var(--text-muted)" />
+              <YAxis stroke="var(--text-muted)" />
               <Tooltip
-                contentStyle={{ backgroundColor: "#1F2937", border: "none", borderRadius: "8px" }}
-                labelStyle={{ color: "#F9FAFB" }}
+                contentStyle={{ backgroundColor: "var(--bg-card)", border: "1px solid var(--border-medium)", borderRadius: "8px" }}
+                labelStyle={{ color: "var(--text-primary)" }}
+                itemStyle={{ color: "var(--text-secondary)" }}
               />
-              <Line type="monotone" dataKey="revenue" stroke="#3B82F6" strokeWidth={2} />
+              <Line type="monotone" dataKey="revenue" stroke="#14B8A6" strokeWidth={2} />
+
             </LineChart>
           </ResponsiveContainer>
         </div>
 
+
         {/* Market Share */}
-        <div className="bg-gray-800 p-6 rounded-lg shadow-lg border border-gray-700">
-          <h3 className="text-lg font-semibold text-white mb-4">Market Share</h3>
+        <div className="bg-theme-card p-6 rounded-lg shadow-lg border border-theme-medium transition-colors duration-300">
+          <h3 className="text-lg font-semibold text-theme-primary mb-4">Market Share</h3>
           <ResponsiveContainer width="100%" height={300}>
             <PieChart>
               <Pie
@@ -76,37 +82,43 @@ export default function CEODashboard() {
                   <Cell key={`cell-${index}`} fill={entry.color} />
                 ))}
               </Pie>
-              <Tooltip />
+              <Tooltip 
+                contentStyle={{ backgroundColor: "var(--bg-card)", border: "1px solid var(--border-medium)", borderRadius: "8px" }}
+                labelStyle={{ color: "var(--text-primary)" }}
+                itemStyle={{ color: "var(--text-secondary)" }}
+              />
             </PieChart>
           </ResponsiveContainer>
         </div>
+
       </div>
 
       {/* Bottom Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Risk & Anomaly Alerts */}
-        <div className="bg-gray-800 p-6 rounded-lg shadow-lg border border-gray-700">
-          <h3 className="text-lg font-semibold text-white mb-4">Risk & Anomaly Alerts</h3>
+        <div className="bg-theme-card p-6 rounded-lg shadow-lg border border-theme-medium transition-colors duration-300">
+          <h3 className="text-lg font-semibold text-theme-primary mb-4">Risk & Anomaly Alerts</h3>
           <div className="space-y-3">
             {alerts.map((alert) => (
-              <div key={alert.id} className="flex items-start space-x-3 p-3 bg-gray-700 rounded">
+              <div key={alert.id} className="flex items-start space-x-3 p-3 bg-theme-secondary rounded transition-colors duration-300">
                 <div className={`w-2 h-2 rounded-full mt-2 ${
-                  alert.type === "warning" ? "bg-yellow-400" :
-                  alert.type === "info" ? "bg-blue-400" : "bg-green-400"
+                  alert.type === "warning" ? "bg-yellow-500" :
+                  alert.type === "info" ? "bg-accent-primary" : "bg-green-500"
                 }`} />
                 <div className="flex-1">
-                  <p className="text-sm text-gray-300">{alert.message}</p>
-                  <p className="text-xs text-gray-500 mt-1">{alert.time}</p>
+                  <p className="text-sm text-theme-secondary">{alert.message}</p>
+                  <p className="text-xs text-theme-muted mt-1">{alert.time}</p>
                 </div>
               </div>
             ))}
           </div>
         </div>
 
+
         {/* Executive Summary */}
-        <div className="bg-gray-800 p-6 rounded-lg shadow-lg border border-gray-700">
-          <h3 className="text-lg font-semibold text-white mb-4">Executive Summary</h3>
-          <div className="text-sm text-gray-300 space-y-2">
+        <div className="bg-theme-card p-6 rounded-lg shadow-lg border border-theme-medium transition-colors duration-300">
+          <h3 className="text-lg font-semibold text-theme-primary mb-4">Executive Summary</h3>
+          <div className="text-sm text-theme-secondary space-y-2">
             <p>• Revenue growth trajectory remains strong with 7.9% monthly increase</p>
             <p>• AI forecasting models predict 18.2% Q4 revenue growth</p>
             <p>• User acquisition rate improved by 8.3% this quarter</p>
@@ -114,6 +126,7 @@ export default function CEODashboard() {
             <p>• Risk mitigation protocols active - no critical alerts</p>
           </div>
         </div>
+
       </div>
     </div>
   );

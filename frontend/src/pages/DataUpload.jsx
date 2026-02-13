@@ -25,10 +25,11 @@ export default function DataUpload() {
       setDataInsights({
         totalRows: uploadedData.preview?.length || 0,
         errors: [
-          { type: "Missing Values", count: 15, percentage: 3.2, color: "#ef4444" },
-          { type: "Duplicate Rows", count: 8, percentage: 1.7, color: "#f97316" },
-          { type: "Invalid Formats", count: 5, percentage: 1.1, color: "#eab308" },
-          { type: "Outliers", count: 3, percentage: 0.6, color: "#22c55e" },
+        { type: "Missing Values", count: 15, percentage: 3.2, color: "#B8956A" },
+          { type: "Duplicate Rows", count: 8, percentage: 1.7, color: "#A67C52" },
+          { type: "Invalid Formats", count: 5, percentage: 1.1, color: "#C9A66B" },
+          { type: "Outliers", count: 3, percentage: 0.6, color: "#8B6340" },
+
         ],
         columnStats: [
           { column: "revenue", missing: 12, duplicates: 0, valid: 465 },
@@ -354,26 +355,27 @@ export default function DataUpload() {
   };
 
   return (
-    <div className="p-6">
+    <div>
       <div className="mb-8">
-        <h1 className="text-3xl font-bold mb-2">Data Upload</h1>
-        <p className="text-gray-400">Upload, analyze, and store multi-sector data with intelligent processing</p>
+        <h1 className="text-3xl font-bold mb-2 text-theme-primary">Data Upload</h1>
+        <p className="text-theme-muted">Upload, analyze, and store multi-sector data with intelligent processing</p>
       </div>
+
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* Side Navigation */}
-        <div className="bg-gray-800 p-6 rounded-lg shadow-lg border border-gray-700">
-          <h3 className="text-lg font-semibold text-white mb-6">Upload Process</h3>
+        <div className="bg-theme-card p-6 rounded-lg shadow-lg border border-theme-medium transition-colors duration-300">
+          <h3 className="text-lg font-semibold text-theme-primary mb-6">Upload Process</h3>
           <div className="space-y-4">
             {steps.map((step) => (
               <div
                 key={step.id}
                 className={`p-4 rounded-lg border transition-all cursor-pointer ${
                   currentStep === step.id
-                    ? "bg-blue-600 border-blue-500 text-white"
+                    ? "bg-accent-primary border-accent-secondary text-theme-inverse"
                     : step.id < currentStep
                     ? "bg-green-600 border-green-500 text-white"
-                    : "bg-gray-700 border-gray-600 text-gray-300 hover:bg-gray-600"
+                    : "bg-theme-secondary border-theme-medium text-theme-secondary hover:bg-theme-tertiary"
                 }`}
                 onClick={() => step.id <= Math.max(currentStep, uploadedData ? 2 : 1) && setCurrentStep(step.id)}
               >
@@ -391,6 +393,7 @@ export default function DataUpload() {
             ))}
           </div>
         </div>
+
 
         {/* Main Content */}
         <div className="lg:col-span-3">

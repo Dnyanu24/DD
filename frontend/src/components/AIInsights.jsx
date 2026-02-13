@@ -35,11 +35,12 @@ export default function AIInsights() {
   };
 
   return (
-    <div className="bg-gray-800 p-6 rounded-lg shadow-lg border border-gray-700">
+    <div className="bg-theme-card p-6 rounded-lg shadow-lg border border-theme-medium transition-colors duration-300">
       <div className="flex items-center space-x-3 mb-6">
-        <Brain className="w-6 h-6 text-purple-400" />
-        <h3 className="text-lg font-semibold text-white">AI Insights Engine</h3>
+        <Brain className="w-6 h-6 text-accent-primary" />
+        <h3 className="text-lg font-semibold text-theme-primary">AI Insights Engine</h3>
       </div>
+
 
       {/* AI Query Box */}
       <div className="mb-6">
@@ -49,12 +50,13 @@ export default function AIInsights() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Ask AI about your data..."
-            className="flex-1 bg-gray-700 text-white px-4 py-2 rounded-lg border border-gray-600 focus:outline-none focus:border-purple-400"
+            className="flex-1 bg-theme-secondary text-theme-primary px-4 py-2 rounded-lg border border-theme-medium focus:outline-none focus:border-accent-primary transition-colors"
           />
           <button
             type="submit"
-            className="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-lg transition-colors flex items-center space-x-2"
+            className="bg-accent-primary hover:bg-accent-hover text-theme-inverse px-4 py-2 rounded-lg transition-colors flex items-center space-x-2"
           >
+
             <Send className="w-4 h-4" />
             <span>Ask</span>
           </button>
@@ -66,33 +68,33 @@ export default function AIInsights() {
         {insights.map((insight, index) => {
           const Icon = insight.icon;
           return (
-            <div key={index} className="bg-gray-700 p-4 rounded-lg border border-gray-600">
+            <div key={index} className="bg-theme-secondary p-4 rounded-lg border border-theme-medium transition-colors duration-300">
               <div className="flex items-start space-x-3">
                 <div className={`p-2 rounded-lg ${
-                  insight.type === "forecast" ? "bg-blue-600" :
+                  insight.type === "forecast" ? "bg-accent-primary" :
                   insight.type === "anomaly" ? "bg-yellow-600" : "bg-green-600"
                 }`}>
-                  <Icon className="w-4 h-4 text-white" />
+                  <Icon className="w-4 h-4 text-theme-inverse" />
                 </div>
                 <div className="flex-1">
-                  <h4 className="text-sm font-semibold text-white mb-1">{insight.title}</h4>
-                  <p className="text-sm text-gray-300 mb-2">{insight.content}</p>
+                  <h4 className="text-sm font-semibold text-theme-primary mb-1">{insight.title}</h4>
+                  <p className="text-sm text-theme-secondary mb-2">{insight.content}</p>
                   <div className="flex items-center space-x-4 text-xs">
                     {insight.confidence && (
-                      <span className="text-green-400">Confidence: {insight.confidence}</span>
+                      <span className="text-green-500">Confidence: {insight.confidence}</span>
                     )}
                     {insight.severity && (
                       <span className={`${
-                        insight.severity === "high" ? "text-red-400" :
-                        insight.severity === "medium" ? "text-yellow-400" : "text-green-400"
+                        insight.severity === "high" ? "text-red-500" :
+                        insight.severity === "medium" ? "text-yellow-500" : "text-green-500"
                       }`}>
                         Severity: {insight.severity}
                       </span>
                     )}
                     {insight.impact && (
                       <span className={`${
-                        insight.impact === "high" ? "text-green-400" :
-                        insight.impact === "medium" ? "text-yellow-400" : "text-blue-400"
+                        insight.impact === "high" ? "text-green-500" :
+                        insight.impact === "medium" ? "text-yellow-500" : "text-accent-primary"
                       }`}>
                         Impact: {insight.impact}
                       </span>
@@ -101,28 +103,30 @@ export default function AIInsights() {
                 </div>
               </div>
             </div>
+
           );
         })}
       </div>
 
       {/* Quick Actions */}
-      <div className="mt-6 pt-4 border-t border-gray-600">
-        <h4 className="text-sm font-semibold text-white mb-3">Quick Actions</h4>
+      <div className="mt-6 pt-4 border-t border-theme-medium">
+        <h4 className="text-sm font-semibold text-theme-primary mb-3">Quick Actions</h4>
         <div className="grid grid-cols-2 gap-2">
-          <button className="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-sm text-gray-300 transition-colors">
+          <button className="bg-theme-tertiary hover:bg-accent-primary hover:text-theme-inverse text-theme-secondary px-3 py-2 rounded text-sm transition-colors">
             Generate Report
           </button>
-          <button className="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-sm text-gray-300 transition-colors">
+          <button className="bg-theme-tertiary hover:bg-accent-primary hover:text-theme-inverse text-theme-secondary px-3 py-2 rounded text-sm transition-colors">
             Export Insights
           </button>
-          <button className="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-sm text-gray-300 transition-colors">
+          <button className="bg-theme-tertiary hover:bg-accent-primary hover:text-theme-inverse text-theme-secondary px-3 py-2 rounded text-sm transition-colors">
             Schedule Alert
           </button>
-          <button className="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-sm text-gray-300 transition-colors">
+          <button className="bg-theme-tertiary hover:bg-accent-primary hover:text-theme-inverse text-theme-secondary px-3 py-2 rounded text-sm transition-colors">
             View Trends
           </button>
         </div>
       </div>
+
     </div>
   );
 }
