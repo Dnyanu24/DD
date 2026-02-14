@@ -135,6 +135,14 @@ class DataCleaningEngine:
     def normalize_data(self, df: pd.DataFrame) -> pd.DataFrame:
         df_clean = df.copy()
         numeric_cols = df.select_dtypes(include=[np.number]).columns
+        if len(numeric_cols) == 0:
+            self.log_action('normalization', {
+                'method': 'min_max',
+                'columns_affected': 0,
+                'quality_score': 1.0
+            })
+            self.quality_scores['normalization'] = 1.0
+            return df_clean
 
         scaler = MinMaxScaler()
         df_clean[numeric_cols] = scaler.fit_transform(df_clean[numeric_cols])
@@ -151,6 +159,14 @@ class DataCleaningEngine:
     def standardize_data(self, df: pd.DataFrame) -> pd.DataFrame:
         df_clean = df.copy()
         numeric_cols = df.select_dtypes(include=[np.number]).columns
+        if len(numeric_cols) == 0:
+            self.log_action('standardization', {
+                'method': 'z_score',
+                'columns_affected': 0,
+                'quality_score': 1.0
+            })
+            self.quality_scores['standardization'] = 1.0
+            return df_clean
 
         scaler = StandardScaler()
         df_clean[numeric_cols] = scaler.fit_transform(df_clean[numeric_cols])

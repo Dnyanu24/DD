@@ -1,6 +1,59 @@
-// Use env base URL, but normalize 0.0.0.0 for browser usage on Windows.
+// Use env base URL, normalize 0.0.0.0, and keep last-working backend URL.
 const RAW_BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
-const BASE_URL = RAW_BASE_URL.replace("0.0.0.0", "127.0.0.1");
+const NORMALIZED_DEFAULT_BASE_URL = RAW_BASE_URL.replace("0.0.0.0", "127.0.0.1");
+const STORED_BASE_URL = localStorage.getItem("api_base_url");
+let BASE_URL = (STORED_BASE_URL || NORMALIZED_DEFAULT_BASE_URL).replace("0.0.0.0", "127.0.0.1");
+
+const FALLBACK_BASE_URLS = Array.from(
+  new Set([
+    NORMALIZED_DEFAULT_BASE_URL,
+    "http://127.0.0.1:8000",
+    "http://localhost:8000",
+    "http://127.0.0.1:8001",
+    "http://localhost:8001",
+  ])
+);
+
+function setActiveBaseUrl(nextBaseUrl) {
+  BASE_URL = nextBaseUrl.replace("0.0.0.0", "127.0.0.1");
+  localStorage.setItem("api_base_url", BASE_URL);
+}
+
+export function getApiBaseUrl() {
+  return BASE_URL;
+}
+
+async function requestWithBaseFallback(path, options = {}, policy = {}) {
+  const { fallbackOnStatus = [404, 502, 503, 504] } = policy;
+  let lastNetworkError = null;
+  let lastResponse = null;
+
+  for (const candidateBaseUrl of FALLBACK_BASE_URLS) {
+    try {
+      const res = await fetch(`${candidateBaseUrl}${path}`, options);
+      if (res.ok) {
+        setActiveBaseUrl(candidateBaseUrl);
+        return res;
+      }
+      if (!fallbackOnStatus.includes(res.status)) {
+        // Valid backend responded; do not keep hopping for auth/business errors.
+        setActiveBaseUrl(candidateBaseUrl);
+        return res;
+      }
+      lastResponse = res;
+    } catch (error) {
+      lastNetworkError = error;
+    }
+  }
+
+  if (lastResponse) {
+    return lastResponse;
+  }
+  if (lastNetworkError) {
+    throw lastNetworkError;
+  }
+  throw new Error("No reachable backend URL found.");
+}
 
 // Helper function to get auth token
 export function getAuthToken() {
@@ -20,7 +73,7 @@ export async function login(username, password) {
     console.log("Login request to:", `${BASE_URL}/api/auth/login`);
     console.log("Request body:", JSON.stringify(requestBody));
 
-    const res = await fetch(`${BASE_URL}/api/auth/login`, {
+    const res = await requestWithBaseFallback(`/api/auth/login`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -76,7 +129,7 @@ export async function register(userData) {
     console.log("Register request to:", `${BASE_URL}/api/auth/register`);
     console.log("Request body:", JSON.stringify(requestBody));
 
-    const res = await fetch(`${BASE_URL}/api/auth/register`, {
+    const res = await requestWithBaseFallback(`/api/auth/register`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -119,7 +172,7 @@ export async function logout() {
 }
 
 export async function getCurrentUser() {
-  const res = await fetch(`${BASE_URL}/api/auth/me`, {
+  const res = await requestWithBaseFallback(`/api/auth/me`, {
     headers: {
       ...getAuthHeaders(),
     },
@@ -172,14 +225,44 @@ export async function getAIInsights() {
 }
 
 export async function uploadData(formData) {
-  const res = await fetch(`${BASE_URL}/api/upload/data`, {
+  const res = await fetch(`${BASE_URL}/api/upload/upload`, {
     method: "POST",
     headers: {
       ...getAuthHeaders(),
     },
     body: formData,
   });
-  return res.json();
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.detail || data?.message || "Upload failed");
+  }
+  return data;
+}
+
+export async function getSectors() {
+  const res = await fetch(`${BASE_URL}/api/upload/sectors`, {
+    headers: {
+      ...getAuthHeaders(),
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.detail || data?.message || "Failed to load sectors");
+  }
+  return data;
+}
+
+export async function getProducts(sectorId) {
+  const res = await fetch(`${BASE_URL}/api/upload/products/${sectorId}`, {
+    headers: {
+      ...getAuthHeaders(),
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.detail || data?.message || "Failed to load products");
+  }
+  return data;
 }
 
 export async function getReports() {
@@ -210,15 +293,17 @@ export async function getUploadedData() {
 }
 
 export async function runDataCleaning(dataId, algorithm) {
-  const res = await fetch(`${BASE_URL}/api/analysis/clean/${dataId}`, {
+  const res = await fetch(`${BASE_URL}/api/analysis/clean/${dataId}?algorithm=${encodeURIComponent(algorithm)}`, {
     method: "POST",
     headers: {
-      "Content-Type": "application/json",
       ...getAuthHeaders(),
     },
-    body: JSON.stringify({ algorithm }),
   });
-  return res.json();
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.detail || data?.message || "Cleaning failed");
+  }
+  return data;
 }
 
 export async function streamDataCleaning(dataId, algorithm, handlers = {}) {
@@ -322,4 +407,21 @@ export async function trainAIModel(modelConfig) {
     body: JSON.stringify(modelConfig),
   });
   return res.json();
+}
+
+export async function chatWithAssistant(payload) {
+  const res = await requestWithBaseFallback(`/api/ai/chat`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.detail || data?.message || "Chat request failed");
+  }
+  return data;
 }

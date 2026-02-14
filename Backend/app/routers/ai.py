@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import Optional, List
+from pydantic import BaseModel
 from app.database import SessionLocal
 from app.models import AIPrediction, AIRecommendation, Sector, RawData, CleanedData, User
 from app.services.ai_predictions import AIPredictionEngine
@@ -8,12 +9,116 @@ from app.dependencies import get_current_user, require_sector_head, require_ceo
 
 router = APIRouter()
 
+
+class ChatRequest(BaseModel):
+    message: str
+    page: Optional[str] = None
+    dataset_id: Optional[int] = None
+
+
+class ChatResponse(BaseModel):
+    reply: str
+    suggestions: List[str]
+
 def get_db():
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
+
+
+@router.post("/chat", response_model=ChatResponse)
+async def chat_assistant(
+    payload: ChatRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Simple context-aware assistant for SDAS without external LLM dependency."""
+    text = (payload.message or "").strip().lower()
+    if not text:
+        return {
+            "reply": "Please type a question about uploads, cleaning, reports, or visualizations.",
+            "suggestions": [
+                "How many datasets are uploaded?",
+                "What cleaning algorithm should I use?",
+                "Show data quality summary",
+            ],
+        }
+
+    total_raw = db.query(RawData).count()
+    total_cleaned = db.query(CleanedData).count()
+    latest_raw = db.query(RawData).order_by(RawData.uploaded_at.desc()).first()
+    latest_cleaned = db.query(CleanedData).order_by(CleanedData.cleaned_at.desc()).first()
+    latest_quality = round((latest_cleaned.quality_score * 100), 2) if latest_cleaned else 0
+
+    if "upload" in text or "dataset" in text:
+        reply = (
+            f"There are {total_raw} uploaded datasets. "
+            f"{total_cleaned} datasets have cleaned output. "
+            f"The latest upload id is {latest_raw.id if latest_raw else 'N/A'}."
+        )
+        return {
+            "reply": reply,
+            "suggestions": [
+                "How do I clean the latest dataset?",
+                "Show cleaning progress steps",
+                "Which page lists uploaded data?",
+            ],
+        }
+
+    if "clean" in text or "algorithm" in text or "quality" in text:
+        reply = (
+            f"Current cleaned dataset count is {total_cleaned}. "
+            f"Latest quality score is {latest_quality}%. "
+            "Use full_pipeline for most cases, missing_values for null-heavy data, "
+            "duplicates for repeated rows, and outliers for distribution cleanup."
+        )
+        return {
+            "reply": reply,
+            "suggestions": [
+                "Start full pipeline cleaning",
+                "Explain ML and clustering steps",
+                "How does feedback learning improve cleaning?",
+            ],
+        }
+
+    if "visual" in text or "graph" in text or "chart" in text:
+        reply = (
+            "Open the Visualizations page to see dashboard graphs based on uploaded data: "
+            "rows by sector, monthly trend, quality distribution, status split, and top datasets."
+        )
+        return {
+            "reply": reply,
+            "suggestions": [
+                "Go to visualizations",
+                "Which chart shows quality distribution?",
+                "How to improve low-quality datasets?",
+            ],
+        }
+
+    if "report" in text:
+        return {
+            "reply": "Use Reports to view generated summaries and schedule outputs after cleaning and analysis steps.",
+            "suggestions": [
+                "Open reports page",
+                "What data is included in reports?",
+                "How to export report files?",
+            ],
+        }
+
+    page_hint = f" on {payload.page}" if payload.page else ""
+    return {
+        "reply": (
+            f"I can help with uploads, cleaning, visualizations, and reports{page_hint}. "
+            f"Current totals: uploaded={total_raw}, cleaned={total_cleaned}. Ask a specific action."
+        ),
+        "suggestions": [
+            "How to upload and clean a dataset?",
+            "Show cleaning best algorithm",
+            "How to view dashboard graphs?",
+        ],
+    }
 
 @router.post("/predict/sales")
 async def predict_sales(

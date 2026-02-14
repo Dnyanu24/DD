@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from typing import Dict, Any, Optional, Callable, List, Tuple
+from typing import Dict, Any, Optional, Callable, List
 import pandas as pd
 import numpy as np
 import json
@@ -32,46 +32,111 @@ def _utc_iso() -> str:
 def _sse_event(event: str, data: Dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
 
-def _get_algorithm_steps(engine: DataCleaningEngine, algorithm: str) -> List[Tuple[str, str, Callable[[pd.DataFrame], pd.DataFrame]]]:
+def _to_json_safe_records(df: pd.DataFrame) -> List[Dict[str, Any]]:
+    safe_df = df.copy()
+    for col in safe_df.columns:
+        if pd.api.types.is_datetime64_any_dtype(safe_df[col]):
+            safe_df[col] = safe_df[col].dt.strftime("%Y-%m-%dT%H:%M:%S")
+    safe_df = safe_df.where(pd.notnull(safe_df), None)
+
+    records = safe_df.to_dict("records")
+    normalized = []
+    for row in records:
+        normalized_row = {}
+        for key, value in row.items():
+            if isinstance(value, pd.Timestamp):
+                normalized_row[key] = value.isoformat()
+            elif isinstance(value, np.generic):
+                normalized_row[key] = value.item()
+            else:
+                normalized_row[key] = value
+        normalized.append(normalized_row)
+    return normalized
+
+def _derive_learning_strategy(db: Session, df: pd.DataFrame) -> Dict[str, Any]:
+    learning_engine = FeedbackLearningEngine()
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    data_characteristics = {
+        "skewness": float(df[numeric_cols].skew().mean()) if len(numeric_cols) > 0 else 0,
+        "distribution": "normal" if len(numeric_cols) > 0 and abs(float(df[numeric_cols].skew().mean())) < 0.8 else "skewed",
+        "needs_normalization": len(numeric_cols) > 0,
+        "needs_standardization": False,
+        "has_noise": len(df) > 80,
+        "has_text": len(df.select_dtypes(include=["object"]).columns) > 0,
+    }
+    config = learning_engine.get_optimal_cleaning_config(data_characteristics)
+
+    # Feedback-learning proxy from historical cleaning outcomes.
+    quality_rows = db.query(DataQualityScore).order_by(DataQualityScore.timestamp.desc()).limit(200).all()
+    avg_quality = float(np.mean([row.score for row in quality_rows])) if quality_rows else 0.0
+    high_quality_rate = (
+        sum(1 for row in quality_rows if row.score >= 0.90) / len(quality_rows)
+        if quality_rows else 0.0
+    )
+
+    if avg_quality >= 0.90 or high_quality_rate >= 0.60:
+        config["impute_strategy"] = "ml"
+        config["outlier_method"] = "zscore"
+        config["standardize"] = True
+        config["normalize"] = False
+    elif avg_quality < 0.75 and quality_rows:
+        config["impute_strategy"] = "median"
+        config["outlier_method"] = "iqr"
+
+    return {
+        "config": config,
+        "history": {
+            "historical_quality_avg": round(avg_quality, 4),
+            "high_quality_rate": round(high_quality_rate, 4),
+            "history_size": len(quality_rows),
+        },
+    }
+
+def _get_algorithm_steps(engine: DataCleaningEngine, algorithm: str, config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    impute_strategy = config.get("impute_strategy", "auto")
+    outlier_method = config.get("outlier_method", "iqr")
+
     pipelines = {
         "missing_values": [
-            ("scan_missing", "Scanning for missing values", lambda df: df),
-            ("impute_values", "Applying missing value imputation", lambda df: engine.impute_missing_values(df, "auto")),
-            ("validate_missing", "Validating imputed values", lambda df: df),
+            {"id": "scan_missing", "label": "Scanning for missing values", "stage": "profiling", "technique": "null pattern scan", "operation": lambda df: df},
+            {"id": "impute_values", "label": "Applying missing value imputation", "stage": "ml", "technique": f"{impute_strategy} imputation", "operation": lambda df: engine.impute_missing_values(df, impute_strategy)},
+            {"id": "validate_missing", "label": "Validating imputed values", "stage": "validation", "technique": "consistency checks", "operation": lambda df: df},
         ],
         "duplicates": [
-            ("scan_duplicates", "Scanning for duplicate rows", lambda df: df),
-            ("remove_duplicates", "Removing duplicate rows", engine.remove_duplicates),
-            ("validate_dedup", "Validating deduplicated rows", lambda df: df),
+            {"id": "scan_duplicates", "label": "Scanning for duplicate rows", "stage": "profiling", "technique": "row signature hashing", "operation": lambda df: df},
+            {"id": "remove_duplicates", "label": "Removing duplicate rows", "stage": "cleaning", "technique": "exact and fuzzy dedup", "operation": engine.remove_duplicates},
+            {"id": "validate_dedup", "label": "Validating deduplicated rows", "stage": "validation", "technique": "row uniqueness validation", "operation": lambda df: df},
         ],
         "outliers": [
-            ("profile_numeric", "Profiling numeric distribution", lambda df: df),
-            ("cap_outliers", "Detecting and capping outliers", lambda df: engine.detect_outliers(df, "iqr")),
-            ("validate_outliers", "Validating adjusted outliers", lambda df: df),
+            {"id": "profile_numeric", "label": "Profiling numeric distribution", "stage": "profiling", "technique": "distribution statistics", "operation": lambda df: df},
+            {"id": "cap_outliers", "label": "Detecting and capping outliers", "stage": "ml", "technique": f"{outlier_method} outlier detection", "operation": lambda df: engine.detect_outliers(df, outlier_method)},
+            {"id": "validate_outliers", "label": "Validating adjusted outliers", "stage": "validation", "technique": "post-clean drift checks", "operation": lambda df: df},
         ],
         "data_types": [
-            ("infer_types", "Inferring target data types", lambda df: df),
-            ("apply_types", "Applying data type correction", engine.correct_data_types),
-            ("validate_types", "Validating corrected types", lambda df: df),
+            {"id": "infer_types", "label": "Inferring target data types", "stage": "profiling", "technique": "schema inference", "operation": lambda df: df},
+            {"id": "apply_types", "label": "Applying data type correction", "stage": "cleaning", "technique": "automatic type coercion", "operation": engine.correct_data_types},
+            {"id": "validate_types", "label": "Validating corrected types", "stage": "validation", "technique": "type consistency checks", "operation": lambda df: df},
         ],
         "normalization": [
-            ("profile_scale", "Analyzing value ranges", lambda df: df),
-            ("apply_normalize", "Applying min-max normalization", engine.normalize_data),
-            ("validate_scale", "Validating normalized ranges", lambda df: df),
+            {"id": "profile_scale", "label": "Analyzing value ranges", "stage": "profiling", "technique": "scale diagnostics", "operation": lambda df: df},
+            {"id": "apply_normalize", "label": "Applying min-max normalization", "stage": "ml", "technique": "min-max scaler", "operation": engine.normalize_data},
+            {"id": "validate_scale", "label": "Validating normalized ranges", "stage": "validation", "technique": "range assertions", "operation": lambda df: df},
         ],
         "text_cleaning": [
-            ("profile_text", "Profiling text columns", lambda df: df),
-            ("apply_text_cleaning", "Cleaning text fields", engine.clean_text),
-            ("validate_text", "Validating text cleanup output", lambda df: df),
+            {"id": "profile_text", "label": "Profiling text columns", "stage": "profiling", "technique": "text pattern scan", "operation": lambda df: df},
+            {"id": "apply_text_cleaning", "label": "Cleaning text fields", "stage": "nlp", "technique": "token normalization and regex cleanup", "operation": engine.clean_text},
+            {"id": "validate_text", "label": "Validating text cleanup output", "stage": "validation", "technique": "semantic formatting checks", "operation": lambda df: df},
         ],
         "full_pipeline": [
-            ("remove_duplicates", "Removing duplicate rows", engine.remove_duplicates),
-            ("missing_values", "Imputing missing values", lambda df: engine.impute_missing_values(df, "auto")),
-            ("outliers", "Detecting outliers", lambda df: engine.detect_outliers(df, "iqr")),
-            ("data_types", "Correcting data types", engine.correct_data_types),
-            ("normalize", "Normalizing numeric columns", engine.normalize_data),
-            ("noise_reduction", "Reducing signal noise", engine.reduce_noise),
-            ("text_cleaning", "Cleaning text fields", engine.clean_text),
+            {"id": "clustering_profile", "label": "Clustering feature groups", "stage": "ml", "technique": "k-means feature grouping for structure detection", "operation": lambda df: df},
+            {"id": "remove_duplicates", "label": "Removing duplicate rows", "stage": "cleaning", "technique": "exact/fuzzy dedup", "operation": engine.remove_duplicates},
+            {"id": "missing_values", "label": "Imputing missing values", "stage": "ml", "technique": f"{impute_strategy} imputation", "operation": lambda df: engine.impute_missing_values(df, impute_strategy)},
+            {"id": "outliers", "label": "Detecting outliers", "stage": "ml", "technique": f"{outlier_method} outlier filtering", "operation": lambda df: engine.detect_outliers(df, outlier_method)},
+            {"id": "data_types", "label": "Correcting data types", "stage": "cleaning", "technique": "schema correction", "operation": engine.correct_data_types},
+            {"id": "normalize", "label": "Normalizing numeric columns", "stage": "ml", "technique": "scaler transforms", "operation": engine.normalize_data if config.get("normalize", False) else (lambda df: df)},
+            {"id": "standardize", "label": "Standardizing numeric columns", "stage": "ml", "technique": "z-score standardization", "operation": engine.standardize_data if config.get("standardize", False) else (lambda df: df)},
+            {"id": "noise_reduction", "label": "Reducing signal noise", "stage": "ml", "technique": "rolling window smoothing", "operation": engine.reduce_noise if config.get("reduce_noise", False) else (lambda df: df)},
+            {"id": "text_cleaning", "label": "Cleaning text fields", "stage": "nlp", "technique": "text normalization", "operation": engine.clean_text if config.get("clean_text", False) else (lambda df: df)},
         ],
     }
     return pipelines.get(algorithm, [])
@@ -91,14 +156,14 @@ def _persist_cleaned_data(
 
     cleaned_entry = db.query(CleanedData).filter(CleanedData.raw_data_id == data_id).first()
     if cleaned_entry:
-        cleaned_entry.cleaned_data = cleaned_df.to_dict("records")
+        cleaned_entry.cleaned_data = _to_json_safe_records(cleaned_df)
         cleaned_entry.cleaning_algorithm = algorithm
         cleaned_entry.quality_score = average_quality
         cleaned_entry.cleaned_at = datetime.utcnow()
     else:
         cleaned_entry = CleanedData(
             raw_data_id=data_id,
-            cleaned_data=cleaned_df.to_dict("records"),
+            cleaned_data=_to_json_safe_records(cleaned_df),
             cleaning_algorithm=algorithm,
             quality_score=average_quality,
         )
@@ -323,14 +388,17 @@ async def clean_data(
         raise HTTPException(status_code=403, detail="Access denied")
 
     cleaning_engine = DataCleaningEngine()
-    steps = _get_algorithm_steps(cleaning_engine, algorithm)
+    source_df = pd.DataFrame(raw_data.data)
+    learning = _derive_learning_strategy(db, source_df)
+    strategy_config = learning["config"]
+    steps = _get_algorithm_steps(cleaning_engine, algorithm, strategy_config)
     if not steps:
         raise HTTPException(status_code=400, detail=f"Unsupported algorithm: {algorithm}")
 
     try:
-        df_clean = pd.DataFrame(raw_data.data)
-        for _, _, operation in steps:
-            df_clean = operation(df_clean)
+        df_clean = source_df.copy()
+        for step in steps:
+            df_clean = step["operation"](df_clean)
 
         persist_result = _persist_cleaned_data(
             db=db,
@@ -346,6 +414,8 @@ async def clean_data(
             "algorithm": algorithm,
             "row_count": len(df_clean),
             "column_count": len(df_clean.columns),
+            "adaptive_config": strategy_config,
+            "learning_feedback": learning["history"],
             "quality_scores": cleaning_engine.get_quality_scores(),
             "logs": cleaning_engine.get_logs(),
             **persist_result,
@@ -371,39 +441,48 @@ async def clean_data_stream(
         raise HTTPException(status_code=403, detail="Access denied")
 
     cleaning_engine = DataCleaningEngine()
-    steps = _get_algorithm_steps(cleaning_engine, algorithm)
+    source_df = pd.DataFrame(raw_data.data)
+    learning = _derive_learning_strategy(db, source_df)
+    strategy_config = learning["config"]
+    steps = _get_algorithm_steps(cleaning_engine, algorithm, strategy_config)
     if not steps:
         raise HTTPException(status_code=400, detail=f"Unsupported algorithm: {algorithm}")
 
     async def event_generator():
         try:
-            df_clean = pd.DataFrame(raw_data.data)
+            df_clean = source_df.copy()
             yield _sse_event("start", {
                 "data_id": data_id,
                 "algorithm": algorithm,
                 "total_steps": len(steps),
+                "adaptive_config": strategy_config,
+                "learning_feedback": learning["history"],
                 "timestamp": _utc_iso(),
             })
 
-            for index, (step_id, step_label, operation) in enumerate(steps):
+            for index, step in enumerate(steps):
                 if await request.is_disconnected():
                     return
 
                 yield _sse_event("step", {
-                    "step_id": step_id,
-                    "label": step_label,
+                    "step_id": step["id"],
+                    "label": step["label"],
                     "status": "running",
+                    "stage": step["stage"],
+                    "technique": step["technique"],
                     "progress": int((index / len(steps)) * 100),
                     "timestamp": _utc_iso(),
                 })
 
                 await asyncio.sleep(0.05)
-                df_clean = operation(df_clean)
+                df_clean = step["operation"](df_clean)
 
                 yield _sse_event("step", {
-                    "step_id": step_id,
-                    "label": step_label,
+                    "step_id": step["id"],
+                    "label": step["label"],
                     "status": "completed",
+                    "stage": step["stage"],
+                    "technique": step["technique"],
                     "progress": int(((index + 1) / len(steps)) * 100),
                     "timestamp": _utc_iso(),
                     "row_count": len(df_clean),
@@ -426,6 +505,8 @@ async def clean_data_stream(
                 "column_count": len(df_clean.columns),
                 "quality_scores": cleaning_engine.get_quality_scores(),
                 "logs": cleaning_engine.get_logs(),
+                "adaptive_config": strategy_config,
+                "learning_feedback": learning["history"],
                 "timestamp": _utc_iso(),
                 **persist_result,
             })

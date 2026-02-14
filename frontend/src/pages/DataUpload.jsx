@@ -1,404 +1,229 @@
-import { useState } from "react";
-import UploadBox from "../components/UploadBox";
-import SummaryCard from "../components/SummaryCard";
+import { useEffect, useState } from "react";
+import { CheckCircle2, Database, FileUp, Loader2 } from "lucide-react";
+import { getProducts, getSectors, getUploadedData, uploadData } from "../services/api";
 
 export default function DataUpload() {
-  const [currentStep, setCurrentStep] = useState(1);
-  const [uploadedData, setUploadedData] = useState(null);
-  const [dataInsights, setDataInsights] = useState(null);
-  const [isProcessing, setIsProcessing] = useState(false);
+  const [sectors, setSectors] = useState([]);
+  const [products, setProducts] = useState([]);
+  const [uploadedHistory, setUploadedHistory] = useState([]);
+  const [selectedSector, setSelectedSector] = useState("");
+  const [selectedProduct, setSelectedProduct] = useState("");
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isUploading, setIsUploading] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState(null);
 
-  const steps = [
-    { id: 1, name: "Upload Data", icon: "📤", description: "Upload your data file" },
-    { id: 2, name: "Data Insights", icon: "📊", description: "Review errors & cleaning needs" },
-    { id: 3, name: "Save to Database", icon: "💾", description: "Store processed data" },
-  ];
+  useEffect(() => {
+    let mounted = true;
 
-  const handleUploadResult = (result) => {
-    setUploadedData(result);
+    const loadInitial = async () => {
+      setIsLoading(true);
+      try {
+        const [sectorRows, uploaded] = await Promise.all([
+          getSectors().catch(() => []),
+          getUploadedData().catch(() => ({ data: [] })),
+        ]);
+        if (!mounted) return;
+        setSectors(Array.isArray(sectorRows) ? sectorRows : []);
+        setUploadedHistory(Array.isArray(uploaded?.data) ? uploaded.data : []);
+        if (Array.isArray(sectorRows) && sectorRows.length > 0) {
+          setSelectedSector(String(sectorRows[0].id));
+        }
+      } finally {
+        if (mounted) setIsLoading(false);
+      }
+    };
+
+    loadInitial();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!selectedSector) {
+      setProducts([]);
+      return;
+    }
+
+    let mounted = true;
+    const loadProducts = async () => {
+      const rows = await getProducts(selectedSector).catch(() => []);
+      if (!mounted) return;
+      setProducts(Array.isArray(rows) ? rows : []);
+      setSelectedProduct("");
+    };
+    loadProducts();
+    return () => {
+      mounted = false;
+    };
+  }, [selectedSector]);
+
+  const refreshHistory = async () => {
+    const uploaded = await getUploadedData().catch(() => ({ data: [] }));
+    setUploadedHistory(Array.isArray(uploaded?.data) ? uploaded.data : []);
   };
 
-  const startAnalysis = () => {
-    setIsProcessing(true);
-    // Simulate data analysis
-    setTimeout(() => {
-      setDataInsights({
-        totalRows: uploadedData.preview?.length || 0,
-        errors: [
-        { type: "Missing Values", count: 15, percentage: 3.2, color: "#B8956A" },
-          { type: "Duplicate Rows", count: 8, percentage: 1.7, color: "#A67C52" },
-          { type: "Invalid Formats", count: 5, percentage: 1.1, color: "#C9A66B" },
-          { type: "Outliers", count: 3, percentage: 0.6, color: "#8B6340" },
+  const handleUpload = async () => {
+    if (!selectedFile || !selectedSector) {
+      setError("Select sector and file before uploading.");
+      return;
+    }
+    setError("");
+    setIsUploading(true);
 
-        ],
-        columnStats: [
-          { column: "revenue", missing: 12, duplicates: 0, valid: 465 },
-          { column: "customer_name", missing: 3, duplicates: 8, valid: 474 },
-          { column: "created_at", missing: 0, duplicates: 0, valid: 477 },
-          { column: "product_id", missing: 0, duplicates: 0, valid: 477 },
-        ],
-        cleaningNeeds: [
-          "Fill missing values in 'revenue' column",
-          "Remove duplicate entries based on 'transaction_id'",
-          "Standardize date formats in 'created_at' column",
-          "Normalize text case in 'customer_name' column",
-        ],
-        qualityScore: 87,
-      });
-      setIsProcessing(false);
-      setCurrentStep(2);
-    }, 3000);
-  };
+    try {
+      const formData = new FormData();
+      formData.append("file", selectedFile);
+      formData.append("sector_id", selectedSector);
+      if (selectedProduct) formData.append("product_id", selectedProduct);
 
-  const handleSaveToDatabase = async () => {
-    setIsProcessing(true);
-    // Simulate saving process
-    setTimeout(() => {
-      setIsProcessing(false);
-      alert("Data successfully saved to database!");
-      setCurrentStep(1);
-      setUploadedData(null);
-      setDataInsights(null);
-    }, 3000);
-  };
-
-  const renderStepContent = () => {
-    switch (currentStep) {
-      case 1:
-        return (
-          <div className="space-y-6">
-            <div className="bg-gray-800 p-6 rounded-lg">
-              <h3 className="text-xl font-semibold text-white mb-4">Upload Data File</h3>
-              <p className="text-gray-400 mb-6">
-                Upload CSV, Excel, or JSON files. Supports multi-sector data with automatic metadata tagging.
-              </p>
-              <UploadBox onResult={handleUploadResult} />
-            </div>
-
-            {uploadedData && (
-              <div className="bg-gray-800 p-6 rounded-lg">
-                <h4 className="text-lg font-semibold text-white mb-4">Upload Summary</h4>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <SummaryCard title="Status" value={uploadedData.message} />
-                  <SummaryCard title="Rows Detected" value={uploadedData.preview?.length || 0} />
-                  <SummaryCard title="File Type" value="CSV" />
-                </div>
-                <div className="mt-6 flex flex-wrap gap-4">
-                  <button
-                    onClick={() => {
-                      startAnalysis();
-                      setTimeout(() => setCurrentStep(2), 3000);
-                    }}
-                    disabled={isProcessing}
-                    className="bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 text-white px-6 py-2 rounded-lg transition-colors flex items-center space-x-2"
-                  >
-                    {isProcessing ? (
-                      <>
-                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                        <span>Processing...</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>📤</span>
-                        <span>Upload & Analyze</span>
-                      </>
-                    )}
-                  </button>
-                  <button
-                    onClick={startAnalysis}
-                    disabled={isProcessing}
-                    className="bg-green-600 hover:bg-green-700 disabled:bg-gray-600 text-white px-6 py-2 rounded-lg transition-colors flex items-center space-x-2"
-                  >
-                    {isProcessing ? (
-                      <>
-                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                        <span>Analyzing...</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>🔍</span>
-                        <span>Start Analysis</span>
-                      </>
-                    )}
-                  </button>
-                  <button
-                    onClick={() => setCurrentStep(2)}
-                    disabled={!dataInsights}
-                    className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white px-6 py-2 rounded-lg transition-colors"
-                  >
-                    View Insights →
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        );
-
-      case 2:
-        return (
-          <div className="space-y-6">
-            <div className="bg-gray-800 p-6 rounded-lg">
-              <h3 className="text-xl font-semibold text-white mb-4">Data Quality Insights</h3>
-              <p className="text-gray-400 mb-6">
-                Review data quality issues and recommended cleaning actions.
-              </p>
-
-              {dataInsights ? (
-                <div className="space-y-6">
-                  {/* Quality Score */}
-                  <div className="bg-gray-700 p-4 rounded-lg">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-white font-medium">Overall Quality Score</span>
-                      <span className={`text-lg font-bold ${dataInsights.qualityScore >= 85 ? 'text-green-400' : dataInsights.qualityScore >= 70 ? 'text-yellow-400' : 'text-red-400'}`}>
-                        {dataInsights.qualityScore}%
-                      </span>
-                    </div>
-                    <div className="w-full bg-gray-600 rounded-full h-2">
-                      <div
-                        className={`h-2 rounded-full ${dataInsights.qualityScore >= 85 ? 'bg-green-500' : dataInsights.qualityScore >= 70 ? 'bg-yellow-500' : 'bg-red-500'}`}
-                        style={{ width: `${dataInsights.qualityScore}%` }}
-                      ></div>
-                    </div>
-                  </div>
-
-                  {/* Error Distribution Chart */}
-                  <div className="bg-gray-700 p-4 rounded-lg">
-                    <h4 className="text-white font-medium mb-4">Error Distribution</h4>
-                    <div className="space-y-4">
-                      <div className="h-64 bg-gray-600 rounded-lg p-4">
-                        <div className="flex items-end justify-between h-full space-x-2">
-                          {dataInsights.errors.map((error, index) => (
-                            <div key={index} className="flex-1 flex flex-col items-center">
-                              <div
-                                className="w-full rounded-t"
-                                style={{
-                                  height: `${(error.count / Math.max(...dataInsights.errors.map(e => e.count))) * 180}px`,
-                                  backgroundColor: error.color,
-                                }}
-                              ></div>
-                              <span className="text-xs text-gray-300 mt-2 transform -rotate-45 origin-top">
-                                {error.type}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 gap-4 text-sm">
-                        {dataInsights.errors.map((error, index) => (
-                          <div key={index} className="flex items-center justify-between bg-gray-600 p-3 rounded">
-                            <div className="flex items-center space-x-2">
-                              <div
-                                className="w-3 h-3 rounded"
-                                style={{ backgroundColor: error.color }}
-                              ></div>
-                              <span className="text-white font-medium">{error.type}</span>
-                            </div>
-                            <div className="text-right">
-                              <span className="text-white font-bold">{error.count}</span>
-                              <span className="text-gray-400 text-xs ml-1">({error.percentage}%)</span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Column Statistics */}
-                  <div className="bg-gray-700 p-4 rounded-lg">
-                    <h4 className="text-white font-medium mb-4">Column Statistics</h4>
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="border-b border-gray-600">
-                            <th className="text-left text-gray-300 py-2">Column</th>
-                            <th className="text-center text-gray-300 py-2">Valid</th>
-                            <th className="text-center text-gray-300 py-2">Missing</th>
-                            <th className="text-center text-gray-300 py-2">Duplicates</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {dataInsights.columnStats.map((stat, index) => (
-                            <tr key={index} className="border-b border-gray-600">
-                              <td className="text-white py-2">{stat.column}</td>
-                              <td className="text-center text-green-400 py-2">{stat.valid}</td>
-                              <td className="text-center text-red-400 py-2">{stat.missing}</td>
-                              <td className="text-center text-yellow-400 py-2">{stat.duplicates}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-
-                  {/* Cleaning Recommendations */}
-                  <div className="bg-gray-700 p-4 rounded-lg">
-                    <h4 className="text-white font-medium mb-4">Recommended Cleaning Actions</h4>
-                    <div className="space-y-2">
-                      {dataInsights.cleaningNeeds.map((need, index) => (
-                        <div key={index} className="flex items-start space-x-3 bg-gray-600 p-3 rounded">
-                          <span className="text-blue-400 mt-1">•</span>
-                          <span className="text-gray-300">{need}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Navigation */}
-                  <div className="flex space-x-4">
-                    <button
-                      onClick={() => setCurrentStep(1)}
-                      className="bg-gray-600 hover:bg-gray-500 text-white px-6 py-2 rounded-lg transition-colors"
-                    >
-                      ← Back to Upload
-                    </button>
-                    <button
-                      onClick={() => setCurrentStep(3)}
-                      className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg transition-colors"
-                    >
-                      Proceed to Save →
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="text-center py-8">
-                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
-                  <p className="text-gray-400">Analyzing uploaded data...</p>
-                </div>
-              )}
-            </div>
-          </div>
-        );
-
-      case 3:
-        return (
-          <div className="space-y-6">
-            <div className="bg-gray-800 p-6 rounded-lg">
-              <h3 className="text-xl font-semibold text-white mb-4">Save to Database</h3>
-              <p className="text-gray-400 mb-6">
-                Review final data and save to the SDAS database with proper indexing and partitioning.
-              </p>
-
-              <div className="space-y-4">
-                <div className="bg-gray-700 p-4 rounded-lg">
-                  <h4 className="text-white font-medium mb-3">Data Summary</h4>
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div>
-                      <span className="text-gray-400">Total Records:</span>
-                      <span className="text-white ml-2">{dataInsights?.totalRows || 0}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-400">Quality Score:</span>
-                      <span className="text-white ml-2">{dataInsights?.qualityScore || 0}%</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-400">Issues Resolved:</span>
-                      <span className="text-green-400 ml-2">{dataInsights?.errors?.length || 0}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-400">Storage Location:</span>
-                      <span className="text-white ml-2">PostgreSQL</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-gray-700 p-4 rounded-lg">
-                  <h4 className="text-white font-medium mb-3">Database Configuration</h4>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Partitioning:</span>
-                      <span className="text-white">By sector & time</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Indexing:</span>
-                      <span className="text-white">Optimized for queries</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Backup:</span>
-                      <span className="text-white">Automatic daily</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex space-x-4">
-                  <button
-                    onClick={() => setCurrentStep(2)}
-                    className="bg-gray-600 hover:bg-gray-500 text-white px-6 py-2 rounded-lg transition-colors"
-                  >
-                    ← Back to Insights
-                  </button>
-                  <button
-                    onClick={handleSaveToDatabase}
-                    disabled={isProcessing}
-                    className="bg-green-600 hover:bg-green-700 disabled:bg-gray-600 text-white px-6 py-2 rounded-lg transition-colors flex items-center space-x-2"
-                  >
-                    {isProcessing ? (
-                      <>
-                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                        <span>Saving...</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>💾</span>
-                        <span>Save to Database</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        );
-
-      default:
-        return null;
+      const response = await uploadData(formData);
+      setResult(response);
+      setSelectedFile(null);
+      await refreshHistory();
+    } catch (uploadError) {
+      setError(uploadError?.message || "Upload failed.");
+    } finally {
+      setIsUploading(false);
     }
   };
 
+  if (isLoading) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <div className="flex items-center gap-2 text-theme-muted">
+          <Loader2 className="h-5 w-5 animate-spin" />
+          Loading upload configuration...
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div>
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold mb-2 text-theme-primary">Data Upload</h1>
-        <p className="text-theme-muted">Upload, analyze, and store multi-sector data with intelligent processing</p>
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-3xl font-bold text-theme-primary">Data Upload</h1>
+        <p className="mt-1 text-theme-muted">
+          Upload file to database, run initial cleaning, and make it available in Data Cleaning.
+        </p>
       </div>
 
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+        <section className="bg-theme-card rounded-xl border border-theme-light p-6 xl:col-span-2">
+          <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold text-theme-primary">
+            <FileUp className="h-5 w-5 text-teal-500" />
+            Upload Dataset
+          </h2>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        {/* Side Navigation */}
-        <div className="bg-theme-card p-6 rounded-lg shadow-lg border border-theme-medium transition-colors duration-300">
-          <h3 className="text-lg font-semibold text-theme-primary mb-6">Upload Process</h3>
-          <div className="space-y-4">
-            {steps.map((step) => (
-              <div
-                key={step.id}
-                className={`p-4 rounded-lg border transition-all cursor-pointer ${
-                  currentStep === step.id
-                    ? "bg-accent-primary border-accent-secondary text-theme-inverse"
-                    : step.id < currentStep
-                    ? "bg-green-600 border-green-500 text-white"
-                    : "bg-theme-secondary border-theme-medium text-theme-secondary hover:bg-theme-tertiary"
-                }`}
-                onClick={() => step.id <= Math.max(currentStep, uploadedData ? 2 : 1) && setCurrentStep(step.id)}
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-theme-secondary">Sector</label>
+              <select
+                value={selectedSector}
+                onChange={(event) => setSelectedSector(event.target.value)}
+                className="w-full rounded-lg border border-theme-light bg-theme-secondary px-3 py-2 text-theme-primary"
               >
-                <div className="flex items-center space-x-3 mb-2">
-                  <span className="text-xl">{step.icon}</span>
-                  <div>
-                    <h4 className="font-medium">{step.name}</h4>
-                    <p className="text-xs opacity-75">{step.description}</p>
-                  </div>
-                </div>
-                {step.id < currentStep && (
-                  <div className="text-xs text-green-300">✓ Completed</div>
-                )}
-              </div>
-            ))}
+                <option value="">Select sector</option>
+                {sectors.map((sector) => (
+                  <option key={sector.id} value={sector.id}>
+                    {sector.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium text-theme-secondary">Product (Optional)</label>
+              <select
+                value={selectedProduct}
+                onChange={(event) => setSelectedProduct(event.target.value)}
+                className="w-full rounded-lg border border-theme-light bg-theme-secondary px-3 py-2 text-theme-primary"
+              >
+                <option value="">No product</option>
+                {products.map((product) => (
+                  <option key={product.id} value={product.id}>
+                    {product.name}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
-        </div>
 
+          <div className="mt-4">
+            <label className="mb-1 block text-sm font-medium text-theme-secondary">Data File</label>
+            <input
+              type="file"
+              accept=".csv,.xlsx,.xls,.json"
+              onChange={(event) => setSelectedFile(event.target.files?.[0] || null)}
+              className="w-full rounded-lg border border-theme-light bg-theme-secondary px-3 py-2 text-theme-primary"
+            />
+          </div>
 
-        {/* Main Content */}
-        <div className="lg:col-span-3">
-          {renderStepContent()}
-        </div>
+          {error ? (
+            <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {error}
+            </div>
+          ) : null}
+
+          <button
+            type="button"
+            onClick={handleUpload}
+            disabled={isUploading}
+            className={`mt-4 flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold text-white ${
+              isUploading
+                ? "cursor-not-allowed bg-slate-500"
+                : "bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-600 hover:to-cyan-600"
+            }`}
+          >
+            {isUploading ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Uploading...
+              </>
+            ) : (
+              <>
+                <Database className="h-4 w-4" />
+                Upload And Store
+              </>
+            )}
+          </button>
+
+          {result ? (
+            <div className="mt-5 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+              <h3 className="flex items-center gap-2 text-sm font-semibold text-emerald-700">
+                <CheckCircle2 className="h-4 w-4" />
+                Stored In Database
+              </h3>
+              <p className="mt-2 text-sm text-emerald-700">{result.message}</p>
+              <p className="mt-1 text-xs text-emerald-700">
+                Raw ID: {result.raw_data_id} | Cleaned ID: {result.cleaned_data_id}
+              </p>
+            </div>
+          ) : null}
+        </section>
+
+        <section className="bg-theme-card rounded-xl border border-theme-light p-6">
+          <h2 className="mb-4 text-lg font-semibold text-theme-primary">Recently Uploaded</h2>
+          <div className="max-h-[28rem] space-y-2 overflow-y-auto">
+            {uploadedHistory.length === 0 ? (
+              <p className="text-sm text-theme-muted">No uploaded datasets yet.</p>
+            ) : (
+              uploadedHistory.slice().reverse().map((dataset) => (
+                <div key={dataset.id} className="rounded-lg border border-theme-light bg-theme-secondary p-3">
+                  <p className="text-sm font-semibold text-theme-primary">Dataset #{dataset.id}</p>
+                  <p className="mt-1 text-xs text-theme-muted">
+                    {dataset.sector_name || "General"} | {(dataset.row_count || 0).toLocaleString()} rows
+                  </p>
+                  <p className="mt-1 text-xs text-theme-muted">
+                    {dataset.has_cleaned_data ? "Initial cleaned" : "Pending cleaning"}
+                  </p>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
       </div>
     </div>
   );

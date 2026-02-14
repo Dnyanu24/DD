@@ -21,6 +21,56 @@ def get_db():
     finally:
         db.close()
 
+def _to_json_safe_records(df: pd.DataFrame):
+    safe_df = df.copy()
+    for col in safe_df.columns:
+        if pd.api.types.is_datetime64_any_dtype(safe_df[col]):
+            safe_df[col] = safe_df[col].dt.strftime("%Y-%m-%dT%H:%M:%S")
+    safe_df = safe_df.where(pd.notnull(safe_df), None)
+
+    records = safe_df.to_dict("records")
+    normalized = []
+    for row in records:
+        normalized_row = {}
+        for key, value in row.items():
+            if isinstance(value, pd.Timestamp):
+                normalized_row[key] = value.isoformat()
+            elif isinstance(value, np.generic):
+                normalized_row[key] = value.item()
+            else:
+                normalized_row[key] = value
+        normalized.append(normalized_row)
+    return normalized
+
+def _adaptive_upload_config(db: Session, df: pd.DataFrame) -> dict:
+    from app.services.feedback_learning import FeedbackLearningEngine
+    learning_engine = FeedbackLearningEngine()
+
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    data_characteristics = {
+        "skewness": float(df[numeric_cols].skew().mean()) if len(numeric_cols) > 0 else 0,
+        "distribution": "normal" if len(numeric_cols) > 0 and abs(float(df[numeric_cols].skew().mean())) < 0.8 else "skewed",
+        "needs_normalization": len(numeric_cols) > 0,
+        "needs_standardization": False,
+        "has_noise": len(df) > 80,
+        "has_text": len(df.select_dtypes(include=["object"]).columns) > 0,
+    }
+    config = learning_engine.get_optimal_cleaning_config(data_characteristics)
+
+    # Lightweight feedback learning from historical quality.
+    recent_scores = db.query(DataQualityScore).order_by(DataQualityScore.timestamp.desc()).limit(200).all()
+    avg_quality = float(np.mean([score.score for score in recent_scores])) if recent_scores else 0.0
+    if avg_quality >= 0.90:
+        config["impute_strategy"] = "ml"
+        config["outlier_method"] = "zscore"
+        config["standardize"] = True
+        config["normalize"] = False
+    elif 0 < avg_quality < 0.75:
+        config["impute_strategy"] = "median"
+        config["outlier_method"] = "iqr"
+
+    return config
+
 @router.post("/upload")
 async def upload_data(
     file: UploadFile = File(...),
@@ -69,31 +119,28 @@ async def upload_data(
     db.commit()
     db.refresh(raw_data_entry)
 
-    # Get optimal cleaning config from feedback learning
-    from app.services.feedback_learning import FeedbackLearningEngine
-    learning_engine = FeedbackLearningEngine()
-
-    # Analyze data characteristics for optimal cleaning
-    data_characteristics = {
-        'skewness': df.select_dtypes(include=[np.number]).skew().mean() if len(df.select_dtypes(include=[np.number]).columns) > 0 else 0,
-        'needs_normalization': True,
-        'needs_standardization': False,
-        'has_noise': len(df) > 50,
-        'has_text': len(df.select_dtypes(include=['object']).columns) > 0
-    }
-
-    optimal_config = learning_engine.get_optimal_cleaning_config(data_characteristics)
+    # Get adaptive config from prior quality feedback.
+    optimal_config = _adaptive_upload_config(db, df)
 
     # Automatic data cleaning with learned preferences
     cleaning_engine = DataCleaningEngine()
-    cleaned_df = cleaning_engine.run_full_pipeline(df, optimal_config)
+    try:
+        cleaned_df = cleaning_engine.run_full_pipeline(df, optimal_config)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Data cleaning during upload failed: {str(e)}")
 
     # Store cleaned data
+    avg_quality = (
+        sum(cleaning_engine.get_quality_scores().values()) / len(cleaning_engine.get_quality_scores())
+        if cleaning_engine.get_quality_scores() else 0.0
+    )
+
+    cleaned_records = _to_json_safe_records(cleaned_df)
     cleaned_data_entry = CleanedData(
         raw_data_id=raw_data_entry.id,
-        cleaned_data=cleaned_df.to_dict('records'),
+        cleaned_data=cleaned_records,
         cleaning_algorithm='full_pipeline',
-        quality_score=0.85  # Placeholder, calculate properly
+        quality_score=avg_quality
     )
     db.add(cleaned_data_entry)
     db.commit()
@@ -135,14 +182,23 @@ async def upload_data(
         "message": "Data uploaded and processed successfully",
         "raw_data_id": raw_data_entry.id,
         "cleaned_data_id": cleaned_data_entry.id,
-        "preview": cleaned_df.head().to_dict('records'),
+        "preview": cleaned_records[:5],
         "quality_scores": quality_scores,
-        "logs": cleaning_engine.get_logs()
+        "logs": cleaning_engine.get_logs(),
+        "adaptive_config": optimal_config
     }
 
 @router.get("/sectors")
 async def get_sectors(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Get available sectors for upload"""
+    existing_count = db.query(Sector).count()
+    if existing_count == 0:
+        bootstrap_company_id = current_user.company_id or 1
+        default_sectors = ["Sales", "Operations", "Finance", "HR"]
+        for name in default_sectors:
+            db.add(Sector(name=name, company_id=bootstrap_company_id))
+        db.commit()
+
     if current_user.role == 'sector_head':
         sectors = db.query(Sector).filter(Sector.id == current_user.sector_id).all()
     else:
@@ -193,6 +249,7 @@ async def get_uploaded_data(
                 
                 result.append({
                     "id": data.id,
+                    "name": f"dataset_{data.id}.csv",
                     "sector_id": data.sector_id,
                     "sector_name": sector_name,
                     "product_id": data.product_id,
@@ -201,6 +258,7 @@ async def get_uploaded_data(
                     "uploaded_at": data.uploaded_at.isoformat() if hasattr(data, 'uploaded_at') and data.uploaded_at else None,
                     "row_count": row_count,
                     "column_count": column_count,
+                    "columns": list(data.data[0].keys()) if row_count > 0 and isinstance(data.data[0], dict) else [],
                     "has_cleaned_data": cleaned is not None,
                     "cleaned_data_id": cleaned.id if cleaned else None,
                     "quality_score": cleaned.quality_score if cleaned else None
