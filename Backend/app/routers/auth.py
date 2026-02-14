@@ -3,10 +3,11 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel
 
 from app.database import SessionLocal
-from app.models import User
+from app.models import User, Company, Sector
 from app.dependencies import (
     authenticate_user,
     create_access_token,
@@ -67,6 +68,22 @@ FRONTEND_ROLE_MAPPING = {
     'Sales Manager': ['sales_manager'],
     'Sector Head': ['sector_head'],
 }
+
+CANONICAL_ROLE_MAP = {
+    "ceo": "ceo",
+    "admin": "admin",
+    "data_analyst": "data_analyst",
+    "sales_manager": "sales_manager",
+    "sector_head": "sector_head",
+    "data analyst": "data_analyst",
+    "sales manager": "sales_manager",
+    "sector head": "sector_head",
+}
+
+def _normalize_role(role: str) -> str:
+    normalized = (role or "").strip().lower().replace("-", "_")
+    normalized = normalized.replace(" ", "_")
+    return CANONICAL_ROLE_MAP.get(normalized, "")
 
 @router.post("/login", response_model=LoginResponse)
 def login(request: LoginRequest, db: Session = Depends(get_db)):
@@ -131,18 +148,56 @@ def register(request: RegisterRequest, db: Session = Depends(get_db)):
             detail="Username already exists"
         )
     
+    role = _normalize_role(request.role)
+    if not role:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid role"
+        )
+
+    company = db.query(Company).filter(Company.id == request.company_id).first()
+    if not company:
+        # Bootstrap a default company for fresh SQLite databases.
+        company = Company(name="Default Company", description="Auto-created default company")
+        db.add(company)
+        db.flush()
+
+    sector_id = request.sector_id
+    if role == "sector_head":
+        if sector_id is None:
+            sector = db.query(Sector).filter(Sector.company_id == company.id).first()
+            if sector:
+                sector_id = sector.id
+    else:
+        sector_id = None
+
+    if sector_id is not None:
+        sector_exists = db.query(Sector).filter(Sector.id == sector_id).first()
+        if not sector_exists:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid sector_id"
+            )
+
     # Create new user
     new_user = User(
         username=request.username,
         password_hash=get_password_hash(request.password),
-        role=request.role,
-        company_id=request.company_id,
-        sector_id=request.sector_id
+        role=role,
+        company_id=company.id,
+        sector_id=sector_id
     )
     
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
+    try:
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Registration failed due to database constraints"
+        )
     
     frontend_role = ROLE_MAPPING.get(new_user.role, new_user.role)
     

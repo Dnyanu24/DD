@@ -1,5 +1,6 @@
-// Use environment variable for production, fallback to localhost for development
-const BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+// Use env base URL, but normalize 0.0.0.0 for browser usage on Windows.
+const RAW_BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+const BASE_URL = RAW_BASE_URL.replace("0.0.0.0", "127.0.0.1");
 
 // Helper function to get auth token
 export function getAuthToken() {
@@ -218,6 +219,79 @@ export async function runDataCleaning(dataId, algorithm) {
     body: JSON.stringify({ algorithm }),
   });
   return res.json();
+}
+
+export async function streamDataCleaning(dataId, algorithm, handlers = {}) {
+  const { onEvent, signal } = handlers;
+  const url = `${BASE_URL}/api/analysis/clean-stream/${dataId}?algorithm=${encodeURIComponent(algorithm)}`;
+
+  const res = await fetch(url, {
+    method: "GET",
+    headers: {
+      "Accept": "text/event-stream",
+      ...getAuthHeaders(),
+    },
+    signal,
+  });
+
+  if (!res.ok) {
+    let message = `Streaming request failed: ${res.status}`;
+    try {
+      const errorData = await res.json();
+      message = errorData?.detail || errorData?.message || message;
+    } catch {
+      const text = await res.text();
+      if (text) message = text;
+    }
+    throw new Error(message);
+  }
+
+  if (!res.body) {
+    throw new Error("Streaming response body is not available.");
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  const emit = (eventName, payload) => {
+    if (typeof onEvent === "function") {
+      onEvent({ event: eventName, data: payload });
+    }
+  };
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const messages = buffer.split("\n\n");
+      buffer = messages.pop() || "";
+
+      for (const rawMessage of messages) {
+        const lines = rawMessage.split("\n").map((line) => line.trim());
+        const eventLine = lines.find((line) => line.startsWith("event:"));
+        const dataLines = lines.filter((line) => line.startsWith("data:"));
+
+        const eventName = eventLine ? eventLine.replace("event:", "").trim() : "message";
+        const dataText = dataLines.map((line) => line.replace("data:", "").trim()).join("\n");
+
+        if (!dataText) {
+          emit(eventName, {});
+          continue;
+        }
+
+        try {
+          emit(eventName, JSON.parse(dataText));
+        } catch {
+          emit(eventName, { message: dataText });
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 export async function getAIPredictions(sectorId) {

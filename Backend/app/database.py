@@ -1,8 +1,10 @@
 import os
+from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data.db")
+DEFAULT_SQLITE_PATH = Path(__file__).resolve().parents[1] / "data.db"
+DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DEFAULT_SQLITE_PATH.as_posix()}")
 
 # Determine if we're using SQLite or PostgreSQL
 if DATABASE_URL.startswith("sqlite"):

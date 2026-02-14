@@ -4,12 +4,19 @@ from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, r2_score
-from statsmodels.tsa.arima.model import ARIMA
-from statsmodels.tsa.holtwinters import ExponentialSmoothing
 import logging
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 import json
+
+try:
+    from statsmodels.tsa.arima.model import ARIMA
+    from statsmodels.tsa.holtwinters import ExponentialSmoothing
+    HAS_STATSMODELS = True
+except Exception:  # pragma: no cover - optional dependency
+    ARIMA = None
+    ExponentialSmoothing = None
+    HAS_STATSMODELS = False
 
 logger = logging.getLogger(__name__)
 
@@ -56,15 +63,17 @@ class AIPredictionEngine:
             raise ValueError("Insufficient data for forecasting")
 
         try:
-            if method == 'arima':
+            if method == 'arima' and HAS_STATSMODELS:
                 model = ARIMA(ts_data, order=(1, 1, 1))
                 model_fit = model.fit()
                 forecast = model_fit.forecast(steps=periods)
-            elif method == 'exponential_smoothing':
+            elif method == 'exponential_smoothing' and HAS_STATSMODELS:
                 model = ExponentialSmoothing(ts_data, seasonal='add', seasonal_periods=12)
                 model_fit = model.fit()
                 forecast = model_fit.forecast(periods)
             else:
+                if method in ('arima', 'exponential_smoothing') and not HAS_STATSMODELS:
+                    logger.warning("statsmodels not installed; falling back to linear forecast")
                 # Simple linear regression on time index
                 X = np.arange(len(ts_data)).reshape(-1, 1)
                 y = ts_data.values

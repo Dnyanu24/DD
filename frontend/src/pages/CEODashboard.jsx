@@ -1,10 +1,10 @@
-import { useState, useEffect } from "react";
+﻿import { useState } from "react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import KPICard from "../components/KPICard";
 import AIInsights from "../components/AIInsights";
-import { getDashboardData, getAIInsights } from "../services/api";
 
-const trendData = [
+// Default data - can be overridden by props or API
+const defaultTrendData = [
   { month: "Jan", revenue: 120000, growth: 5.2 },
   { month: "Feb", revenue: 135000, growth: 12.5 },
   { month: "Mar", revenue: 142000, growth: 5.2 },
@@ -13,7 +13,7 @@ const trendData = [
   { month: "Jun", revenue: 178000, growth: 7.9 },
 ];
 
-const marketShareData = [
+const defaultMarketShareData = [
   { name: "SDAS", value: 35, color: "#14B8A6" },
   { name: "Competitor A", value: 25, color: "#0D9488" },
   { name: "Competitor B", value: 20, color: "#2DD4BF" },
@@ -30,17 +30,37 @@ const chartColors = {
   text: "#94A3B8"
 };
 
+// Empty state component
+const EmptyState = ({ message = "No data available" }) => (
+  <div className="flex items-center justify-center h-64 text-theme-muted">
+    <div className="text-center">
+      <div className="text-4xl mb-2">ðŸ“Š</div>
+      <p>{message}</p>
+    </div>
+  </div>
+);
 
 
 
-export default function CEODashboard() {
-  const [alerts] = useState([
+
+
+export default function CEODashboard({ trendData = defaultTrendData, marketShareData = defaultMarketShareData, alerts: propAlerts }) {
+  const [defaultAlerts] = useState([
     { id: 1, type: "warning", message: "Revenue growth slowing in Q3", time: "2 hours ago" },
     { id: 2, type: "info", message: "New market opportunity identified", time: "4 hours ago" },
     { id: 3, type: "success", message: "AI forecast accuracy improved by 15%", time: "1 day ago" },
   ]);
 
+  // Use prop data if provided, otherwise use defaults
+  const alerts = propAlerts || defaultAlerts;
+  
+  // Check if data is empty
+  const hasTrendData = trendData && trendData.length > 0;
+  const hasMarketShareData = marketShareData && marketShareData.length > 0;
+  const hasAlerts = alerts && alerts.length > 0;
+
   return (
+
     <div className="space-y-6">
 
       {/* KPI Cards */}
@@ -59,8 +79,10 @@ export default function CEODashboard() {
         {/* Strategic Trend Analysis */}
         <div className="bg-theme-card p-6 rounded-2xl shadow-lg transition-colors duration-300">
           <h3 className="text-lg font-semibold text-theme-primary mb-4">Strategic Trend Analysis</h3>
+          {hasTrendData ? (
           <ResponsiveContainer width="100%" height={300}>
             <LineChart data={trendData}>
+
               <CartesianGrid stroke={chartColors.grid} strokeDasharray="none" vertical={false} />
               <XAxis 
                 dataKey="month" 
@@ -96,13 +118,18 @@ export default function CEODashboard() {
               />
             </LineChart>
           </ResponsiveContainer>
+          ) : (
+            <EmptyState message="No trend data available" />
+          )}
         </div>
+
 
 
 
         {/* Market Share */}
         <div className="bg-theme-card p-6 rounded-2xl shadow-lg transition-colors duration-300">
           <h3 className="text-lg font-semibold text-theme-primary mb-4">Market Share</h3>
+          {hasMarketShareData ? (
           <ResponsiveContainer width="100%" height={300}>
             <PieChart>
               <Pie
@@ -137,7 +164,11 @@ export default function CEODashboard() {
               />
             </PieChart>
           </ResponsiveContainer>
+          ) : (
+            <EmptyState message="No market share data available" />
+          )}
         </div>
+
 
 
       </div>
@@ -146,8 +177,8 @@ export default function CEODashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Risk & Anomaly Alerts */}
         <div className="bg-theme-card p-6 rounded-2xl shadow-lg transition-colors duration-300">
-
           <h3 className="text-lg font-semibold text-theme-primary mb-4">Risk & Anomaly Alerts</h3>
+          {hasAlerts ? (
           <div className="space-y-3">
             {alerts.map((alert) => (
               <div key={alert.id} className="flex items-start space-x-3 p-3 bg-theme-secondary rounded transition-colors duration-300">
@@ -162,7 +193,11 @@ export default function CEODashboard() {
               </div>
             ))}
           </div>
+          ) : (
+            <EmptyState message="No alerts at this time" />
+          )}
         </div>
+
 
 
         {/* Executive Summary */}
@@ -170,11 +205,11 @@ export default function CEODashboard() {
 
           <h3 className="text-lg font-semibold text-theme-primary mb-4">Executive Summary</h3>
           <div className="text-sm text-theme-secondary space-y-2">
-            <p>• Revenue growth trajectory remains strong with 7.9% monthly increase</p>
-            <p>• AI forecasting models predict 18.2% Q4 revenue growth</p>
-            <p>• User acquisition rate improved by 8.3% this quarter</p>
-            <p>• Market share expansion continues with 35% current position</p>
-            <p>• Risk mitigation protocols active - no critical alerts</p>
+            <p>â€¢ Revenue growth trajectory remains strong with 7.9% monthly increase</p>
+            <p>â€¢ AI forecasting models predict 18.2% Q4 revenue growth</p>
+            <p>â€¢ User acquisition rate improved by 8.3% this quarter</p>
+            <p>â€¢ Market share expansion continues with 35% current position</p>
+            <p>â€¢ Risk mitigation protocols active - no critical alerts</p>
           </div>
         </div>
 
@@ -182,3 +217,5 @@ export default function CEODashboard() {
     </div>
   );
 }
+
+

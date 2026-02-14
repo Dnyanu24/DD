@@ -2,7 +2,8 @@ import { useState } from "react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar } from "recharts";
 import KPICard from "../components/KPICard";
 
-const salesData = [
+// Default data - can be overridden by props or API
+const defaultSalesData = [
   { day: "Mon", sales: 12500, target: 12000 },
   { day: "Tue", sales: 15200, target: 13000 },
   { day: "Wed", sales: 11800, target: 12500 },
@@ -10,21 +11,21 @@ const salesData = [
   { day: "Fri", sales: 14200, target: 13500 },
 ];
 
-const regionalData = [
+const defaultRegionalData = [
   { region: "North America", sales: 45000, color: "#14B8A6" },
   { region: "Europe", sales: 32000, color: "#0D9488" },
   { region: "Asia Pacific", sales: 28000, color: "#2DD4BF" },
   { region: "Latin America", sales: 18000, color: "#5EEAD4" },
 ];
 
-const customerSegments = [
+const defaultCustomerSegments = [
   { name: "Enterprise", value: 45, color: "#14B8A6" },
   { name: "SMB", value: 30, color: "#0D9488" },
   { name: "Startup", value: 15, color: "#2DD4BF" },
   { name: "Individual", value: 10, color: "#5EEAD4" },
 ];
 
-const demandForecast = [
+const defaultDemandForecast = [
   { month: "Jul", actual: 125000, forecast: 132000 },
   { month: "Aug", actual: null, forecast: 145000 },
   { month: "Sep", actual: null, forecast: 158000 },
@@ -43,19 +44,48 @@ const chartColors = {
   text: "#94A3B8"
 };
 
-export default function SalesManagerDashboard() {
-  const [alerts] = useState([
+// Empty state component
+const EmptyState = ({ message = "No data available" }) => (
+  <div className="flex items-center justify-center h-64 text-theme-muted">
+    <div className="text-center">
+      <div className="text-4xl mb-2">📊</div>
+      <p>{message}</p>
+    </div>
+  </div>
+);
+
+export default function SalesManagerDashboard({ 
+  salesData = defaultSalesData,
+  regionalData = defaultRegionalData,
+  customerSegments = defaultCustomerSegments,
+  demandForecast = defaultDemandForecast,
+  alerts: propAlerts,
+  recommendations: propRecommendations
+}) {
+  const [defaultAlerts] = useState([
     { id: 1, type: "warning", message: "Q4 target at 78% - acceleration needed", time: "1 hour ago" },
     { id: 2, type: "info", message: "New lead from Fortune 500 company", time: "3 hours ago" },
     { id: 3, type: "success", message: "Europe region exceeded monthly target", time: "5 hours ago" },
   ]);
 
-  const [recommendations] = useState([
+  const [defaultRecommendations] = useState([
     "Focus outbound efforts on North America enterprise segment",
     "Launch targeted campaign for Asia Pacific SMB market",
     "Schedule follow-ups for 15 high-value leads",
     "Optimize pricing strategy for startup segment",
   ]);
+
+  // Use prop data if provided, otherwise use defaults
+  const alerts = propAlerts || defaultAlerts;
+  const recommendations = propRecommendations || defaultRecommendations;
+
+  // Check if data is empty
+  const hasSalesData = salesData && salesData.length > 0;
+  const hasRegionalData = regionalData && regionalData.length > 0;
+  const hasCustomerSegments = customerSegments && customerSegments.length > 0;
+  const hasDemandForecast = demandForecast && demandForecast.length > 0;
+  const hasAlerts = alerts && alerts.length > 0;
+  const hasRecommendations = recommendations && recommendations.length > 0;
 
   return (
     <div className="space-y-6">
@@ -73,6 +103,7 @@ export default function SalesManagerDashboard() {
         {/* Daily Sales vs Target */}
         <div className="bg-theme-card p-6 rounded-2xl shadow-lg transition-colors duration-300">
           <h3 className="text-lg font-semibold text-theme-primary mb-4">Daily Sales vs Target</h3>
+          {hasSalesData ? (
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={salesData}>
               <CartesianGrid stroke={chartColors.grid} strokeDasharray="none" vertical={false} />
@@ -104,11 +135,15 @@ export default function SalesManagerDashboard() {
               <Bar dataKey="target" fill={chartColors.secondary} name="Target" radius={[6, 6, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
+          ) : (
+            <EmptyState message="No sales data available" />
+          )}
         </div>
 
         {/* Customer Segmentation */}
         <div className="bg-theme-card p-6 rounded-2xl shadow-lg transition-colors duration-300">
           <h3 className="text-lg font-semibold text-theme-primary mb-4">Customer Segmentation</h3>
+          {hasCustomerSegments ? (
           <ResponsiveContainer width="100%" height={300}>
             <PieChart>
               <Pie
@@ -143,6 +178,9 @@ export default function SalesManagerDashboard() {
               />
             </PieChart>
           </ResponsiveContainer>
+          ) : (
+            <EmptyState message="No customer segmentation data available" />
+          )}
         </div>
       </div>
 
@@ -151,6 +189,7 @@ export default function SalesManagerDashboard() {
         {/* Demand Forecast */}
         <div className="bg-theme-card p-6 rounded-2xl shadow-lg transition-colors duration-300">
           <h3 className="text-lg font-semibold text-theme-primary mb-4">Demand Forecast</h3>
+          {hasDemandForecast ? (
           <ResponsiveContainer width="100%" height={300}>
             <LineChart data={demandForecast}>
               <CartesianGrid stroke={chartColors.grid} strokeDasharray="none" vertical={false} />
@@ -199,11 +238,16 @@ export default function SalesManagerDashboard() {
               />
             </LineChart>
           </ResponsiveContainer>
+          ) : (
+            <EmptyState message="No forecast data available" />
+          )}
         </div>
 
         {/* Regional Performance */}
         <div className="bg-theme-card p-6 rounded-2xl shadow-lg transition-colors duration-300">
           <h3 className="text-lg font-semibold text-theme-primary mb-4">Regional Performance</h3>
+          {hasRegionalData ? (
+          <>
           <div className="space-y-4">
             {regionalData.map((region) => (
               <div key={region.region} className="flex items-center justify-between">
@@ -224,6 +268,10 @@ export default function SalesManagerDashboard() {
             </div>
             <p className="text-sm text-theme-muted mt-2">Overall Target Progress: 75%</p>
           </div>
+          </>
+          ) : (
+            <EmptyState message="No regional data available" />
+          )}
         </div>
       </div>
 
@@ -232,6 +280,7 @@ export default function SalesManagerDashboard() {
         {/* Operational Alerts */}
         <div className="bg-theme-card p-6 rounded-2xl shadow-lg transition-colors duration-300">
           <h3 className="text-lg font-semibold text-theme-primary mb-4">Operational Alerts</h3>
+          {hasAlerts ? (
           <div className="space-y-3">
             {alerts.map((alert) => (
               <div key={alert.id} className="flex items-start space-x-3 p-3 bg-theme-secondary rounded-xl transition-colors duration-300">
@@ -246,11 +295,15 @@ export default function SalesManagerDashboard() {
               </div>
             ))}
           </div>
+          ) : (
+            <EmptyState message="No alerts at this time" />
+          )}
         </div>
 
         {/* Task Recommendations */}
         <div className="bg-theme-card p-6 rounded-2xl shadow-lg transition-colors duration-300">
           <h3 className="text-lg font-semibold text-theme-primary mb-4">AI Task Recommendations</h3>
+          {hasRecommendations ? (
           <div className="space-y-3">
             {recommendations.map((rec, index) => (
               <div key={index} className="flex items-start space-x-3 p-3 bg-theme-secondary rounded-xl transition-colors duration-300">
@@ -259,6 +312,9 @@ export default function SalesManagerDashboard() {
               </div>
             ))}
           </div>
+          ) : (
+            <EmptyState message="No recommendations at this time" />
+          )}
         </div>
       </div>
     </div>

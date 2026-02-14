@@ -17,68 +17,41 @@ import {
 
 export default function Sidebar() {
   const location = useLocation();
-  const { user, logout } = useAuth();
+  const { user, logout, getNavigationItems } = useAuth();
   const { theme, toggleTheme } = useTheme();
-  
   const currentRole = user?.role || "CEO";
 
-  const getMenuItems = (role) => {
-    const baseItems = [
-      { path: "/", label: "Dashboard", icon: LayoutDashboard },
-    ];
-
-    const roleSpecificItems = {
-      CEO: [
-        { path: "/upload", label: "Data Upload", icon: Upload },
-        { path: "/cleaning", label: "Data Cleaning", icon: Sparkles },
-        { path: "/models", label: "AI Models", icon: Bot },
-        { path: "/visualizations", label: "Visualizations", icon: BarChart3 },
-        { path: "/reports", label: "Reports", icon: FileText },
-        { path: "/roles", label: "Role Management", icon: Users },
-        { path: "/settings", label: "Settings", icon: Settings },
-      ],
-      "Data Analyst": [
-        { path: "/upload", label: "Data Upload", icon: Upload },
-        { path: "/cleaning", label: "Data Cleaning", icon: Sparkles },
-        { path: "/models", label: "AI Models", icon: Bot },
-        { path: "/visualizations", label: "Visualizations", icon: BarChart3 },
-        { path: "/reports", label: "Reports", icon: FileText },
-        { path: "/settings", label: "Settings", icon: Settings },
-      ],
-      "Sales Manager": [
-        { path: "/upload", label: "Data Upload", icon: Upload },
-        { path: "/visualizations", label: "Visualizations", icon: BarChart3 },
-        { path: "/reports", label: "Reports", icon: FileText },
-        { path: "/settings", label: "Settings", icon: Settings },
-      ],
-      "Sector Head": [
-        { path: "/upload", label: "Data Upload", icon: Upload },
-        { path: "/cleaning", label: "Data Cleaning", icon: Sparkles },
-        { path: "/visualizations", label: "Visualizations", icon: BarChart3 },
-        { path: "/reports", label: "Reports", icon: FileText },
-        { path: "/settings", label: "Settings", icon: Settings },
-      ],
-    };
-
-    return [...baseItems, ...(roleSpecificItems[role] || roleSpecificItems.CEO)];
+  const iconMap = {
+    Dashboard: LayoutDashboard,
+    "Data Upload": Upload,
+    "Data Cleaning": Sparkles,
+    "AI Models": Bot,
+    Visualizations: BarChart3,
+    Reports: FileText,
+    "Role Management": Users,
+    Settings,
   };
 
-  const menuItems = getMenuItems(currentRole);
+  const menuItems = getNavigationItems().map((item) => ({
+    ...item,
+    icon: iconMap[item.label] || LayoutDashboard,
+  }));
 
   return (
-    <div className="fixed left-0 top-0 h-full w-64 bg-theme-sidebar border-r border-theme flex flex-col transition-colors duration-300">
+    <div className="fixed left-0 top-0 h-full w-64 bg-clay-100 dark:bg-slate-950 border-r border-clay-200 dark:border-teal-900/40 flex flex-col transition-colors duration-300">
       {/* Logo Section */}
-      <div className="p-6 border-b border-theme">
+      <div className="p-6 border-b border-clay-200 dark:border-teal-900/40">
         <div className="flex items-center space-x-3">
-          <div className="w-10 h-10 rounded-xl accent-primary flex items-center justify-center shadow-md">
-            <span className="text-xl font-bold text-theme-inverse">S</span>
+          <div className="w-10 h-10 rounded-xl bg-clay-500 dark:bg-gradient-to-br dark:from-teal-500 dark:to-cyan-500 flex items-center justify-center shadow-md">
+            <span className="text-xl font-bold text-white">S</span>
           </div>
           <div>
-            <h1 className="text-lg font-bold text-theme-primary">SDAS</h1>
-            <p className="text-xs text-theme-muted">Smart Data Analytics</p>
+            <h1 className="text-lg font-bold text-clay-900 dark:text-slate-100">SDAS</h1>
+            <p className="text-xs text-clay-600 dark:text-slate-400">Smart Data Analytics</p>
           </div>
         </div>
       </div>
+
 
       {/* Role Badge */}
       <div className="px-6 py-3">
@@ -99,24 +72,26 @@ export default function Sidebar() {
               to={item.path}
               className={`flex items-center space-x-3 px-4 py-3 rounded-xl transition-all duration-200 group ${
                 isActive
-                  ? "accent-primary text-theme-inverse shadow-md"
-                  : "text-theme-secondary hover:bg-theme-secondary hover:text-theme-primary"
+                  ? "bg-clay-500 dark:bg-gradient-to-r dark:from-teal-600 dark:to-cyan-600 text-white shadow-md"
+                  : "text-clay-700 dark:text-slate-300 hover:bg-clay-200 dark:hover:bg-slate-900 hover:text-clay-900 dark:hover:text-teal-300"
               }`}
             >
-              <Icon className={`w-5 h-5 ${isActive ? "text-theme-inverse" : "text-theme-muted group-hover:text-theme-primary"}`} />
+              <Icon className={`w-5 h-5 ${isActive ? "text-white" : "text-clay-500 dark:text-slate-400 group-hover:text-clay-900 dark:group-hover:text-teal-300"}`} />
               <span className="font-medium">{item.label}</span>
             </Link>
           );
         })}
       </nav>
 
+
       {/* Bottom Section */}
-      <div className="p-4 border-t border-theme space-y-2">
+      <div className="p-4 border-t border-clay-200 dark:border-teal-900/40 space-y-2">
         {/* Theme Toggle */}
         <button
           onClick={toggleTheme}
-          className="w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-theme-secondary hover:bg-theme-secondary transition-all duration-200"
+          className="w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-clay-700 dark:text-slate-300 hover:bg-clay-200 dark:hover:bg-slate-900 transition-all duration-200"
         >
+
           {theme === 'dark' ? (
             <>
               <Sun className="w-5 h-5 text-amber-500" />

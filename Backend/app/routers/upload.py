@@ -2,12 +2,13 @@ from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Form, B
 from sqlalchemy.orm import Session
 from typing import Optional
 import pandas as pd
+import numpy as np
 import json
 from datetime import datetime
 import asyncio
 
 from app.database import SessionLocal
-from app.models import RawData, CleanedData, DataQualityScore, Sector, Product, User
+from app.models import RawData, CleanedData, DataQualityScore, Sector, Product, User, AIPrediction
 from app.services.data_cleaning import DataCleaningEngine
 from app.dependencies import get_current_user
 
@@ -154,3 +155,68 @@ async def get_products(sector_id: int, db: Session = Depends(get_db)):
     """Get products for a sector"""
     products = db.query(Product).filter(Product.sector_id == sector_id).all()
     return [{"id": p.id, "name": p.name} for p in products]
+
+@router.get("/uploaded-data")
+async def get_uploaded_data(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get all uploaded data with metadata"""
+    
+    try:
+        # Query raw data with related info
+        raw_data = db.query(RawData).all()
+        
+        result = []
+        for data in raw_data:
+            try:
+                # Get sector name
+                sector = db.query(Sector).filter(Sector.id == data.sector_id).first()
+                sector_name = sector.name if sector else "Unknown"
+                
+                # Get product name if exists
+                product_name = None
+                if data.product_id:
+                    product = db.query(Product).filter(Product.id == data.product_id).first()
+                    product_name = product.name if product else None
+                
+                # Get cleaned data info
+                cleaned = db.query(CleanedData).filter(CleanedData.raw_data_id == data.id).first()
+                
+                # Safely get row and column counts
+                row_count = 0
+                column_count = 0
+                if data.data and isinstance(data.data, list) and len(data.data) > 0:
+                    row_count = len(data.data)
+                    if isinstance(data.data[0], dict):
+                        column_count = len(data.data[0].keys())
+                
+                result.append({
+                    "id": data.id,
+                    "sector_id": data.sector_id,
+                    "sector_name": sector_name,
+                    "product_id": data.product_id,
+                    "product_name": product_name,
+                    "uploaded_by": data.uploaded_by,
+                    "uploaded_at": data.uploaded_at.isoformat() if hasattr(data, 'uploaded_at') and data.uploaded_at else None,
+                    "row_count": row_count,
+                    "column_count": column_count,
+                    "has_cleaned_data": cleaned is not None,
+                    "cleaned_data_id": cleaned.id if cleaned else None,
+                    "quality_score": cleaned.quality_score if cleaned else None
+                })
+            except Exception as item_error:
+                # Skip items that cause errors
+                continue
+        
+        return {
+            "data": result,
+            "total_count": len(result)
+        }
+    except Exception as e:
+        # Return empty data on error
+        return {
+            "data": [],
+            "total_count": 0,
+            "error": str(e)
+        }

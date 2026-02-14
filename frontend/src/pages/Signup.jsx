@@ -1,7 +1,6 @@
-import { useState } from "react";
+﻿import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { register } from "../services/api";
-import { useTheme } from "../context/ThemeContext";
 import { Eye, EyeOff, User, Mail, Lock, Building, ArrowRight, CheckCircle } from "lucide-react";
 
 export default function Signup() {
@@ -19,7 +18,6 @@ export default function Signup() {
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const navigate = useNavigate();
-  const { theme } = useTheme();
 
   const roles = [
     { value: "ceo", label: "CEO" },
@@ -318,3 +316,5 @@ export default function Signup() {
     </div>
   );
 }
+
+

@@ -22,8 +22,8 @@ function ProtectedRoute({ children }) {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-theme-primary">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-accent-primary"></div>
+      <div className="min-h-screen flex items-center justify-center bg-clay-50 dark:bg-slate-950">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-clay-500 dark:border-clay-400"></div>
       </div>
     );
   }
@@ -32,6 +32,15 @@ function ProtectedRoute({ children }) {
     return <Navigate to="/login" replace />;
   }
 
+  return children;
+}
+
+function RoleRoute({ path, children }) {
+  const { loading, canAccessRoute } = useAuth();
+  if (loading) return null;
+  if (!canAccessRoute(path)) {
+    return <Navigate to="/" replace />;
+  }
   return children;
 }
 
@@ -57,20 +66,20 @@ function DashboardRouter() {
 // Main App Layout
 function AppLayout() {
   return (
-    <div className="min-h-screen bg-theme-primary text-theme-primary transition-colors duration-300">
+    <div className="min-h-screen bg-clay-50 dark:bg-slate-950 text-clay-900 dark:text-slate-100 transition-colors duration-300">
       <Sidebar />
       <div className="ml-64 flex flex-col min-h-screen">
         <Header />
-        <main className="flex-1 overflow-y-auto bg-theme-secondary p-6">
+        <main className="flex-1 overflow-y-auto bg-clay-100 dark:bg-slate-900 p-6">
           <Routes>
             <Route path="/" element={<DashboardRouter />} />
-            <Route path="/upload" element={<DataUpload />} />
-            <Route path="/cleaning" element={<DataCleaning />} />
-            <Route path="/models" element={<AIModels />} />
-            <Route path="/visualizations" element={<Visualizations />} />
-            <Route path="/reports" element={<Reports />} />
-            <Route path="/roles" element={<RoleManagement />} />
-            <Route path="/settings" element={<Settings />} />
+            <Route path="/upload" element={<RoleRoute path="/upload"><DataUpload /></RoleRoute>} />
+            <Route path="/cleaning" element={<RoleRoute path="/cleaning"><DataCleaning /></RoleRoute>} />
+            <Route path="/models" element={<RoleRoute path="/models"><AIModels /></RoleRoute>} />
+            <Route path="/visualizations" element={<RoleRoute path="/visualizations"><Visualizations /></RoleRoute>} />
+            <Route path="/reports" element={<RoleRoute path="/reports"><Reports /></RoleRoute>} />
+            <Route path="/roles" element={<RoleRoute path="/roles"><RoleManagement /></RoleRoute>} />
+            <Route path="/settings" element={<RoleRoute path="/settings"><Settings /></RoleRoute>} />
           </Routes>
         </main>
       </div>
@@ -95,8 +104,8 @@ function AppContent() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-theme-primary">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-accent-primary"></div>
+      <div className="min-h-screen flex items-center justify-center bg-clay-50 dark:bg-slate-950">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-clay-500 dark:border-clay-400"></div>
       </div>
     );
   }

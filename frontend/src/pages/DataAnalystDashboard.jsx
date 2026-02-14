@@ -2,14 +2,15 @@ import { useState } from "react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Scatter } from "recharts";
 import KPICard from "../components/KPICard";
 
-const dataQualityData = [
+// Default data - can be overridden by props or API
+const defaultDataQualityData = [
   { metric: "Completeness", value: 94.2 },
   { metric: "Accuracy", value: 87.5 },
   { metric: "Consistency", value: 91.8 },
   { metric: "Timeliness", value: 96.3 },
 ];
 
-const anomalyData = [
+const defaultAnomalyData = [
   { time: "00:00", normal: 100, anomaly: null },
   { time: "04:00", normal: 98, anomaly: null },
   { time: "08:00", normal: 95, anomaly: 120 },
@@ -18,14 +19,14 @@ const anomalyData = [
   { time: "20:00", normal: 101, anomaly: 85 },
 ];
 
-const modelPerformanceData = [
+const defaultModelPerformanceData = [
   { model: "Random Forest", accuracy: 0.92, precision: 0.89, recall: 0.91 },
   { model: "Neural Network", accuracy: 0.88, precision: 0.85, recall: 0.87 },
   { model: "SVM", accuracy: 0.85, precision: 0.82, recall: 0.83 },
   { model: "Logistic Regression", accuracy: 0.78, precision: 0.75, recall: 0.76 },
 ];
 
-const sampleData = [
+const defaultSampleData = [
   { id: 1, feature1: 2.5, feature2: 3.1, cluster: "A" },
   { id: 2, feature1: 1.8, feature2: 2.9, cluster: "A" },
   { id: 3, feature1: 4.2, feature2: 1.5, cluster: "B" },
@@ -44,8 +45,29 @@ const chartColors = {
   anomaly: "#EF4444"
 };
 
-export default function DataAnalystDashboard() {
+// Empty state component
+const EmptyState = ({ message = "No data available" }) => (
+  <div className="flex items-center justify-center h-64 text-theme-muted">
+    <div className="text-center">
+      <div className="text-4xl mb-2">📊</div>
+      <p>{message}</p>
+    </div>
+  </div>
+);
+
+export default function DataAnalystDashboard({ 
+  dataQualityData = defaultDataQualityData,
+  anomalyData = defaultAnomalyData,
+  modelPerformanceData = defaultModelPerformanceData,
+  sampleData = defaultSampleData
+}) {
   const [selectedModel, setSelectedModel] = useState("Random Forest");
+
+  // Check if data is empty
+  const hasDataQualityData = dataQualityData && dataQualityData.length > 0;
+  const hasAnomalyData = anomalyData && anomalyData.length > 0;
+  const hasModelPerformanceData = modelPerformanceData && modelPerformanceData.length > 0;
+  const hasSampleData = sampleData && sampleData.length > 0;
 
   return (
     <div className="space-y-6">
@@ -63,6 +85,7 @@ export default function DataAnalystDashboard() {
         {/* Data Quality Metrics */}
         <div className="bg-theme-card p-6 rounded-2xl shadow-lg transition-colors duration-300">
           <h3 className="text-lg font-semibold text-theme-primary mb-4">Data Quality Metrics</h3>
+          {hasDataQualityData ? (
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={dataQualityData}>
               <CartesianGrid stroke={chartColors.grid} strokeDasharray="none" vertical={false} />
@@ -97,11 +120,15 @@ export default function DataAnalystDashboard() {
               />
             </BarChart>
           </ResponsiveContainer>
+          ) : (
+            <EmptyState message="No data quality metrics available" />
+          )}
         </div>
 
         {/* Anomaly Detection */}
         <div className="bg-theme-card p-6 rounded-2xl shadow-lg transition-colors duration-300">
           <h3 className="text-lg font-semibold text-theme-primary mb-4">Anomaly Detection</h3>
+          {hasAnomalyData ? (
           <ResponsiveContainer width="100%" height={300}>
             <LineChart data={anomalyData}>
               <CartesianGrid stroke={chartColors.grid} strokeDasharray="none" vertical={false} />
@@ -146,6 +173,9 @@ export default function DataAnalystDashboard() {
               />
             </LineChart>
           </ResponsiveContainer>
+          ) : (
+            <EmptyState message="No anomaly data available" />
+          )}
         </div>
       </div>
 
@@ -154,6 +184,8 @@ export default function DataAnalystDashboard() {
         {/* Model Performance */}
         <div className="bg-theme-card p-6 rounded-2xl shadow-lg transition-colors duration-300">
           <h3 className="text-lg font-semibold text-theme-primary mb-4">Model Performance</h3>
+          {hasModelPerformanceData ? (
+          <>
           <div className="mb-4">
             <select
               value={selectedModel}
@@ -197,6 +229,10 @@ export default function DataAnalystDashboard() {
               <Bar dataKey="recall" fill={chartColors.tertiary} name="Recall" radius={[6, 6, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
+          </>
+          ) : (
+            <EmptyState message="No model performance data available" />
+          )}
         </div>
 
         {/* Feature Correlation Heatmap Placeholder */}
@@ -215,6 +251,7 @@ export default function DataAnalystDashboard() {
       {/* Data Table */}
       <div className="bg-theme-card p-6 rounded-2xl shadow-lg transition-colors duration-300">
         <h3 className="text-lg font-semibold text-theme-primary mb-4">Sample Data Preview</h3>
+        {hasSampleData ? (
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-left text-theme-secondary">
             <thead className="text-xs text-theme-muted uppercase bg-theme-secondary">
@@ -249,6 +286,9 @@ export default function DataAnalystDashboard() {
             </tbody>
           </table>
         </div>
+        ) : (
+          <EmptyState message="No sample data available" />
+        )}
       </div>
     </div>
   );

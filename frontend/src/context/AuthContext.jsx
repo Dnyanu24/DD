@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback } from "react";
+import { createContext, useContext, useState, useEffect } from "react";
 import { login as apiLogin, logout as apiLogout, getAuthToken, getCurrentUser } from "../services/api";
 
 const AuthContext = createContext(null);
@@ -72,13 +72,13 @@ function AuthProviderComponent({ children }) {
               setUser(currentUser);
               localStorage.setItem("user", JSON.stringify(currentUser));
             }
-          } catch (e) {
+          } catch {
             // Token invalid, clear it
             localStorage.removeItem("token");
             localStorage.removeItem("user");
             setUser(null);
           }
-        } catch (e) {
+        } catch {
           // Invalid stored user, clear it
           localStorage.removeItem("token");
           localStorage.removeItem("user");
@@ -104,24 +104,24 @@ function AuthProviderComponent({ children }) {
   };
 
   // Get navigation items based on user role
-  const getNavigationItems = useCallback(() => {
+  const getNavigationItems = () => {
     if (!user?.role) return ROLE_NAVIGATION.CEO;
     return ROLE_NAVIGATION[user.role] || ROLE_NAVIGATION.CEO;
-  }, [user?.role]);
+  };
 
   // Check if user has specific permission
-  const hasPermission = useCallback((permission) => {
+  const hasPermission = (permission) => {
     if (!user?.role) return false;
     const permissions = ROLE_PERMISSIONS[user.role] || [];
     return permissions.includes(permission);
-  }, [user?.role]);
+  };
 
   // Check if user can access specific route
-  const canAccessRoute = useCallback((route) => {
+  const canAccessRoute = (route) => {
     if (!user?.role) return false;
     const navItems = ROLE_NAVIGATION[user.role] || [];
     return navItems.some(item => item.path === route) || route === "/";
-  }, [user?.role]);
+  };
 
   const value = {
     user,
