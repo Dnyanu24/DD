@@ -11,6 +11,17 @@ import {
   WandSparkles,
 } from "lucide-react";
 import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Legend,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+import {
+  getCleaningComparison,
   getDataCleaningStats,
   getCleanedDatasets,
   getUploadedData,
@@ -57,6 +68,8 @@ export default function DataCleaning() {
   const [streamStatus, setStreamStatus] = useState("idle");
   const [cleanedDatasets, setCleanedDatasets] = useState([]);
   const [downloadingId, setDownloadingId] = useState(null);
+  const [comparisonData, setComparisonData] = useState(null);
+  const [comparisonLoading, setComparisonLoading] = useState(false);
 
   const activeRunRef = useRef(0);
   const streamAbortRef = useRef(null);
@@ -88,12 +101,36 @@ export default function DataCleaning() {
     };
   }, []);
 
+  useEffect(() => {
+    const loadComparison = async () => {
+      if (!selectedDatasetId) {
+        setComparisonData(null);
+        return;
+      }
+      setComparisonLoading(true);
+      try {
+        const data = await getCleaningComparison(selectedDatasetId);
+        setComparisonData(data);
+      } catch {
+        setComparisonData(null);
+      } finally {
+        setComparisonLoading(false);
+      }
+    };
+    loadComparison();
+  }, [selectedDatasetId]);
+
   const filteredDatasets = useMemo(() => {
     const lower = query.trim().toLowerCase();
-    if (!lower) return uploadedData;
-    return uploadedData.filter((dataset) =>
+    const source = !lower
+      ? uploadedData
+      : uploadedData.filter((dataset) =>
       dataset.name.toLowerCase().includes(lower) || dataset.sector.toLowerCase().includes(lower)
     );
+    return [...source].sort((a, b) => {
+      if (a.status === b.status) return b.id - a.id;
+      return a.status === "Pending" ? -1 : 1;
+    });
   }, [query, uploadedData]);
 
   const selectedDataset = useMemo(
@@ -219,6 +256,12 @@ export default function DataCleaning() {
         setCleaningLogs((prev) => [...prev, `[${formatTime(new Date())}] ${fallback.message || "Fallback cleaning completed"}`]);
       }
       await loadData();
+      try {
+        const data = await getCleaningComparison(selectedDataset.id);
+        setComparisonData(data);
+      } catch {
+        setComparisonData(null);
+      }
     } catch (error) {
       setStreamStatus("fallback");
       setCleaningLogs((prev) => [...prev, `[${formatTime(new Date())}] Stream failed, switching to fallback endpoint`]);
@@ -227,6 +270,12 @@ export default function DataCleaning() {
         setCleaningProgress(100);
         setCleaningLogs((prev) => [...prev, `[${formatTime(new Date())}] ${fallback.message || "Fallback cleaning completed"}`]);
         await loadData();
+        try {
+          const data = await getCleaningComparison(selectedDataset.id);
+          setComparisonData(data);
+        } catch {
+          setComparisonData(null);
+        }
       } catch (fallbackError) {
         setStreamStatus("error");
         setCleaningLogs((prev) => [...prev, `[${formatTime(new Date())}] Cleaning failed: ${fallbackError?.message || error?.message || "Unknown error"}`]);
@@ -521,6 +570,47 @@ export default function DataCleaning() {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+      </section>
+
+      <section className="clean-card mt-6 rounded-xl border p-4">
+        <h2 className="mb-3 text-lg font-semibold text-clay-900 dark:text-slate-100">Before vs After Cleaning</h2>
+        {comparisonLoading ? (
+          <p className="text-sm text-clay-500 dark:text-slate-400">Loading comparison...</p>
+        ) : !comparisonData ? (
+          <p className="text-sm text-clay-500 dark:text-slate-400">Run cleaning to see before/after graphs.</p>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            <div className="rounded-lg border border-clay-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900/40">
+              <p className="mb-2 text-xs font-semibold text-clay-700 dark:text-slate-300">Issue Metrics</p>
+              <ResponsiveContainer width="100%" height={250}>
+                <BarChart data={comparisonData.issues || []}>
+                  <CartesianGrid stroke="rgba(148,163,184,0.2)" strokeDasharray="3 3" />
+                  <XAxis dataKey="metric" stroke="var(--text-muted)" />
+                  <YAxis stroke="var(--text-muted)" />
+                  <Tooltip />
+                  <Legend />
+                  <Bar dataKey="before" fill="#ef4444" name="Before" />
+                  <Bar dataKey="after" fill="#10b981" name="After" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div className="rounded-lg border border-clay-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900/40">
+              <p className="mb-2 text-xs font-semibold text-clay-700 dark:text-slate-300">Missing Values By Column</p>
+              <ResponsiveContainer width="100%" height={250}>
+                <BarChart data={comparisonData.missing_by_column || []}>
+                  <CartesianGrid stroke="rgba(148,163,184,0.2)" strokeDasharray="3 3" />
+                  <XAxis dataKey="column" stroke="var(--text-muted)" tick={{ fontSize: 10 }} />
+                  <YAxis stroke="var(--text-muted)" />
+                  <Tooltip />
+                  <Legend />
+                  <Bar dataKey="before" fill="#f97316" name="Before" />
+                  <Bar dataKey="after" fill="#22c55e" name="After" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
           </div>
         )}
       </section>

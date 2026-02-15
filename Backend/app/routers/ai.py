@@ -20,6 +20,12 @@ class ChatResponse(BaseModel):
     reply: str
     suggestions: List[str]
 
+
+class RolePredictionResponse(BaseModel):
+    role: str
+    company_id: int
+    predictions: List[dict]
+
 def get_db():
     db = SessionLocal()
     try:
@@ -38,6 +44,104 @@ def _allowed_sector_ids(db: Session, current_user: User) -> List[int]:
 def _ensure_sector_access(db: Session, current_user: User, sector_id: int) -> None:
     if sector_id not in _allowed_sector_ids(db, current_user):
         raise HTTPException(status_code=403, detail="Access denied")
+
+
+@router.get("/role-predictions", response_model=RolePredictionResponse)
+async def get_role_predictions(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Return role-specific prediction guidance based on datasets used in the system."""
+    sector_ids = _allowed_sector_ids(db, current_user)
+    if not sector_ids:
+        return {"role": current_user.role, "company_id": current_user.company_id, "predictions": []}
+
+    raw_rows = db.query(RawData).filter(RawData.sector_id.in_(sector_ids)).all()
+    cleaned_rows = db.query(CleanedData)\
+        .join(RawData, CleanedData.raw_data_id == RawData.id)\
+        .filter(RawData.sector_id.in_(sector_ids)).all()
+
+    total_rows = sum(len(row.data or []) for row in raw_rows)
+    cleaned_ratio = (len(cleaned_rows) / max(len(raw_rows), 1)) * 100 if raw_rows else 0
+    avg_quality = (sum((row.quality_score or 0) for row in cleaned_rows) / len(cleaned_rows) * 100) if cleaned_rows else 0
+
+    role_key = (current_user.role or "").lower()
+    predictions = []
+
+    if role_key in ["ceo", "admin"]:
+        predictions.append({
+            "title": "Company Data Readiness",
+            "value": round(cleaned_ratio, 2),
+            "unit": "%",
+            "detail": f"{len(cleaned_rows)} of {len(raw_rows)} datasets cleaned for company analytics.",
+            "recommended_action": "Approve pending role requests and push low-cleaning sectors to run full pipeline.",
+        })
+        predictions.append({
+            "title": "Expected Reporting Confidence",
+            "value": round(avg_quality, 2),
+            "unit": "%",
+            "detail": "Estimated confidence for executive dashboards from current cleaned quality.",
+            "recommended_action": "Prioritize sectors below 80% quality before monthly reporting.",
+        })
+    elif role_key == "data_analyst":
+        predictions.append({
+            "title": "Cleaning Coverage Forecast",
+            "value": round(cleaned_ratio, 2),
+            "unit": "%",
+            "detail": "How much of your accessible data is already cleaned.",
+            "recommended_action": "Run missing-values and outlier pipeline on pending datasets.",
+        })
+        predictions.append({
+            "title": "Model Feature Reliability",
+            "value": round(avg_quality, 2),
+            "unit": "%",
+            "detail": "Estimated reliability score for training features in current datasets.",
+            "recommended_action": "Increase reliability using schema correction and text cleaning.",
+        })
+    elif role_key == "sales_manager":
+        predictions.append({
+            "title": "Sales Insight Readiness",
+            "value": round(avg_quality, 2),
+            "unit": "%",
+            "detail": "Projected trust level for visualization and forecast dashboards.",
+            "recommended_action": "Use cleaned sector datasets with highest quality for forecasting.",
+        })
+        predictions.append({
+            "title": "Usable Dataset Count",
+            "value": len(cleaned_rows),
+            "unit": "datasets",
+            "detail": "Cleaned datasets ready for performance comparison charts.",
+            "recommended_action": "Request cleaning of remaining pending sales datasets.",
+        })
+    else:
+        predictions.append({
+            "title": "Sector Pipeline Health",
+            "value": round(cleaned_ratio, 2),
+            "unit": "%",
+            "detail": "Share of your sector datasets available as cleaned outputs.",
+            "recommended_action": "Clean pending datasets to improve sector-level predictions.",
+        })
+        predictions.append({
+            "title": "Sector Data Quality Forecast",
+            "value": round(avg_quality, 2),
+            "unit": "%",
+            "detail": "Expected quality score for next prediction cycle based on current cleaned files.",
+            "recommended_action": "Apply full pipeline and review error-profile before model run.",
+        })
+
+    predictions.append({
+        "title": "Processed Volume",
+        "value": total_rows,
+        "unit": "rows",
+        "detail": "Total rows uploaded in your accessible scope.",
+        "recommended_action": "Upload balanced sector data for more stable predictions.",
+    })
+
+    return {
+        "role": current_user.role,
+        "company_id": current_user.company_id,
+        "predictions": predictions,
+    }
 
 
 @router.post("/chat", response_model=ChatResponse)

@@ -8,8 +8,7 @@ from datetime import datetime
 import asyncio
 
 from app.database import SessionLocal
-from app.models import RawData, CleanedData, DataQualityScore, Sector, Product, User, AIPrediction
-from app.services.data_cleaning import DataCleaningEngine
+from app.models import RawData, CleanedData, DataQualityScore, Sector, Product, User
 from app.dependencies import get_current_user
 
 router = APIRouter()
@@ -120,72 +119,16 @@ async def upload_data(
     db.commit()
     db.refresh(raw_data_entry)
 
-    # Get adaptive config from prior quality feedback.
+    # Upload keeps dataset in pending state; cleaning happens from Data Cleaning page.
     optimal_config = _adaptive_upload_config(db, df)
 
-    # Automatic data cleaning with learned preferences
-    cleaning_engine = DataCleaningEngine()
-    try:
-        cleaned_df = cleaning_engine.run_full_pipeline(df, optimal_config)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Data cleaning during upload failed: {str(e)}")
-
-    # Store cleaned data
-    avg_quality = (
-        sum(cleaning_engine.get_quality_scores().values()) / len(cleaning_engine.get_quality_scores())
-        if cleaning_engine.get_quality_scores() else 0.0
-    )
-
-    cleaned_records = _to_json_safe_records(cleaned_df)
-    cleaned_data_entry = CleanedData(
-        raw_data_id=raw_data_entry.id,
-        cleaned_data=cleaned_records,
-        cleaning_algorithm='full_pipeline',
-        quality_score=avg_quality
-    )
-    db.add(cleaned_data_entry)
-    db.commit()
-
-    # Store quality scores
-    quality_scores = cleaning_engine.get_quality_scores()
-    for algorithm, score in quality_scores.items():
-        score_entry = DataQualityScore(
-            cleaned_data_id=cleaned_data_entry.id,
-            score=score,
-            algorithm=algorithm
-        )
-        db.add(score_entry)
-    db.commit()
-
-    # Generate AI predictions automatically
-    from app.services.ai_predictions import AIPredictionEngine
-    ai_engine = AIPredictionEngine()
-
-    # Basic forecasting if time series data detected
-    numeric_cols = cleaned_df.select_dtypes(include=[np.number]).columns
-    if len(numeric_cols) > 0 and len(cleaned_df) > 10:
-        try:
-            forecast_result = ai_engine.forecast_sales(cleaned_df, numeric_cols[0], periods=6)
-            # Store prediction in DB
-            prediction_entry = AIPrediction(
-                sector_id=sector_id,
-                product_id=product_id,
-                prediction_type='sales_forecast',
-                prediction_data=forecast_result,
-                confidence=forecast_result.get('confidence', 0.5)
-            )
-            db.add(prediction_entry)
-            db.commit()
-        except Exception as e:
-            print(f"Forecasting failed: {e}")
-
     return {
-        "message": "Data uploaded and processed successfully",
+        "message": "Data uploaded successfully. Run cleaning from Data Cleaning page.",
         "raw_data_id": raw_data_entry.id,
-        "cleaned_data_id": cleaned_data_entry.id,
-        "preview": cleaned_records[:5],
-        "quality_scores": quality_scores,
-        "logs": cleaning_engine.get_logs(),
+        "cleaned_data_id": None,
+        "preview": _to_json_safe_records(df.head(5)),
+        "quality_scores": {},
+        "logs": [],
         "adaptive_config": optimal_config
     }
 

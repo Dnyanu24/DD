@@ -301,7 +301,10 @@ def _persist_cleaned_data(
         else 0.0
     )
 
-    cleaned_entry = db.query(CleanedData).filter(CleanedData.raw_data_id == data_id).first()
+    cleaned_entry = db.query(CleanedData).filter(
+        CleanedData.raw_data_id == data_id,
+        CleanedData.cleaning_algorithm == algorithm
+    ).first()
     if cleaned_entry:
         cleaned_entry.cleaned_data = _to_json_safe_records(cleaned_df)
         cleaned_entry.cleaning_algorithm = algorithm
@@ -886,6 +889,85 @@ async def download_cleaned_dataset(
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{base_name}.csv"'},
     )
+
+
+@router.get("/clean-compare/{data_id}")
+async def get_cleaning_comparison(
+    data_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return before/after cleaning comparison metrics for graphing."""
+    raw_data = _get_accessible_raw_data(db, data_id, current_user)
+    if not raw_data:
+        raise HTTPException(status_code=404, detail="Data not found")
+
+    cleaned_row = db.query(CleanedData).filter(
+        CleanedData.raw_data_id == data_id,
+        ~CleanedData.cleaning_algorithm.contains("__sector__")
+    ).order_by(CleanedData.cleaned_at.desc()).first()
+    if not cleaned_row:
+        raise HTTPException(status_code=404, detail="Cleaned dataset not found")
+
+    before_df = pd.DataFrame(raw_data.data if isinstance(raw_data.data, list) else [])
+    after_df = pd.DataFrame(cleaned_row.cleaned_data if isinstance(cleaned_row.cleaned_data, list) else [])
+
+    def _missing_pct(df: pd.DataFrame) -> float:
+        total_cells = max(len(df) * max(len(df.columns), 1), 1)
+        return round((float(df.isna().sum().sum()) / total_cells) * 100, 2) if len(df.columns) else 0.0
+
+    def _duplicate_rows(df: pd.DataFrame) -> int:
+        return int(df.duplicated().sum()) if len(df.columns) else 0
+
+    def _outlier_count(df: pd.DataFrame) -> int:
+        numeric_cols = df.select_dtypes(include=[np.number]).columns
+        total = 0
+        for col in numeric_cols:
+            series = df[col].dropna()
+            if len(series) < 4:
+                continue
+            q1 = series.quantile(0.25)
+            q3 = series.quantile(0.75)
+            iqr = q3 - q1
+            if iqr == 0:
+                continue
+            lower = q1 - 1.5 * iqr
+            upper = q3 + 1.5 * iqr
+            total += int(((series < lower) | (series > upper)).sum())
+        return total
+
+    before_missing = _missing_pct(before_df)
+    after_missing = _missing_pct(after_df)
+    before_duplicates = _duplicate_rows(before_df)
+    after_duplicates = _duplicate_rows(after_df)
+    before_outliers = _outlier_count(before_df)
+    after_outliers = _outlier_count(after_df)
+
+    all_cols = sorted(set(before_df.columns).union(set(after_df.columns)))
+    missing_columns = []
+    for col in all_cols:
+        before_col = int(before_df[col].isna().sum()) if col in before_df.columns else 0
+        after_col = int(after_df[col].isna().sum()) if col in after_df.columns else 0
+        missing_columns.append({"column": str(col), "before": before_col, "after": after_col})
+    missing_columns.sort(key=lambda row: row["before"] + row["after"], reverse=True)
+
+    return {
+        "data_id": data_id,
+        "summary": {
+            "rows_before": int(len(before_df)),
+            "rows_after": int(len(after_df)),
+            "columns_before": int(len(before_df.columns)),
+            "columns_after": int(len(after_df.columns)),
+            "quality_before": round(100 - before_missing, 2),
+            "quality_after": round(float(cleaned_row.quality_score) * 100, 2),
+        },
+        "issues": [
+            {"metric": "Missing %", "before": before_missing, "after": after_missing},
+            {"metric": "Duplicate Rows", "before": before_duplicates, "after": after_duplicates},
+            {"metric": "Outlier Count", "before": before_outliers, "after": after_outliers},
+        ],
+        "missing_by_column": missing_columns[:10],
+    }
 
 @router.get("/insights/{sector_id}")
 async def get_sector_insights(

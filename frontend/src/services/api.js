@@ -513,6 +513,32 @@ export async function trainAIModel(modelConfig) {
   return res.json();
 }
 
+export async function getRolePredictions() {
+  const res = await requestWithBaseFallback(`/api/ai/role-predictions`, {
+    headers: {
+      ...getAuthHeaders(),
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.detail || data?.message || "Failed to load role predictions");
+  }
+  return data;
+}
+
+export async function getCleaningComparison(dataId) {
+  const res = await requestWithBaseFallback(`/api/analysis/clean-compare/${dataId}`, {
+    headers: {
+      ...getAuthHeaders(),
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.detail || data?.message || "Failed to load cleaning comparison");
+  }
+  return data;
+}
+
 export async function chatWithAssistant(payload) {
   const res = await requestWithBaseFallback(`/api/ai/chat`, {
     method: "POST",
