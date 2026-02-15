@@ -14,6 +14,7 @@ class Company(Base):
 
     sectors = relationship("Sector", back_populates="company")
     users = relationship("User", back_populates="company")
+    join_requests = relationship("CompanyJoinRequest", back_populates="company")
 
 # Sector Model
 class Sector(Base):
@@ -51,6 +52,25 @@ class User(Base):
 
     company = relationship("Company", back_populates="users")
     sector = relationship("Sector", back_populates="users")
+    reviewed_requests = relationship("CompanyJoinRequest", back_populates="reviewer")
+
+
+class CompanyJoinRequest(Base):
+    __tablename__ = "company_join_requests"
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(255), nullable=False)
+    password_hash = Column(String(255), nullable=False)
+    requested_role = Column(String(50), nullable=False)
+    company_id = Column(Integer, ForeignKey("companies.id"), nullable=False)
+    sector_id = Column(Integer, ForeignKey("sectors.id"), nullable=True)
+    status = Column(String(20), nullable=False, default="pending")  # pending, approved, rejected
+    reviewed_by = Column(Integer, ForeignKey("users_roles.id"), nullable=True)
+    reviewed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    company = relationship("Company", back_populates="join_requests")
+    sector = relationship("Sector")
+    reviewer = relationship("User", back_populates="reviewed_requests")
 
 # Raw Data Model
 class RawData(Base):

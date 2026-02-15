@@ -3,6 +3,7 @@ import { AuthProvider, useAuth } from "./context/AuthContext";
 import { ThemeProvider } from "./context/ThemeContext";
 import Sidebar from "./components/Sidebar";
 import Header from "./components/Header";
+import ChatWidget from "./components/ChatWidget";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 import CEODashboard from "./pages/CEODashboard";
@@ -82,6 +83,7 @@ function AppLayout() {
             <Route path="/settings" element={<RoleRoute path="/settings"><Settings /></RoleRoute>} />
           </Routes>
         </main>
+        <ChatWidget />
       </div>
     </div>
   );

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
   Database,
+  Download,
   FileText,
   Loader2,
   PlayCircle,
@@ -11,9 +12,11 @@ import {
 } from "lucide-react";
 import {
   getDataCleaningStats,
+  getCleanedDatasets,
   getUploadedData,
   runDataCleaning,
   streamDataCleaning,
+  downloadCleanedDataset,
 } from "../services/api";
 
 const CLEANING_ALGORITHMS = [
@@ -52,6 +55,8 @@ export default function DataCleaning() {
   const [cleaningSteps, setCleaningSteps] = useState([]);
   const [cleaningLogs, setCleaningLogs] = useState([]);
   const [streamStatus, setStreamStatus] = useState("idle");
+  const [cleanedDatasets, setCleanedDatasets] = useState([]);
+  const [downloadingId, setDownloadingId] = useState(null);
 
   const activeRunRef = useRef(0);
   const streamAbortRef = useRef(null);
@@ -68,6 +73,8 @@ export default function DataCleaning() {
       const rows = Array.isArray(dataResponse?.data) ? dataResponse.data : [];
       const normalized = rows.map(normalizeDataset);
       setUploadedData(normalized);
+      const cleanedResponse = await getCleanedDatasets().catch(() => ({ data: [] }));
+      setCleanedDatasets(Array.isArray(cleanedResponse?.data) ? cleanedResponse.data : []);
       if (normalized.length > 0) setSelectedDatasetId((prev) => prev ?? normalized[0].id);
     } finally {
       setIsLoading(false);
@@ -226,6 +233,25 @@ export default function DataCleaning() {
       }
     } finally {
       if (activeRunRef.current === runId) setIsRunningCleaning(false);
+    }
+  };
+
+  const handleDownload = async (cleanedDataId, format = "csv") => {
+    setDownloadingId(cleanedDataId);
+    try {
+      const { blob, filename } = await downloadCleanedDataset(cleanedDataId, format);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setCleaningLogs((prev) => [...prev, `[${formatTime(new Date())}] Download failed: ${error.message}`]);
+    } finally {
+      setDownloadingId(null);
     }
   };
 
@@ -456,6 +482,48 @@ export default function DataCleaning() {
           </div>
         </section>
       </div>
+
+      <section className="clean-card mt-6 rounded-xl border p-4">
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <h2 className="text-lg font-semibold text-clay-900 dark:text-slate-100">Cleaned Datasets</h2>
+          <span className="text-xs text-clay-600 dark:text-slate-400">{cleanedDatasets.length} files</span>
+        </div>
+        {cleanedDatasets.length === 0 ? (
+          <p className="text-sm text-clay-500 dark:text-slate-400">No cleaned datasets yet.</p>
+        ) : (
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+            {cleanedDatasets.map((item) => (
+              <div key={item.cleaned_data_id} className="rounded-lg border border-clay-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900/40">
+                <p className="text-sm font-semibold text-clay-900 dark:text-slate-100">
+                  Raw #{item.raw_data_id} • {item.sector_label}
+                </p>
+                <p className="mt-1 text-xs text-clay-600 dark:text-slate-400">
+                  {item.row_count?.toLocaleString?.() ?? item.row_count} rows • {item.column_count} columns • quality {Math.round((item.quality_score || 0) * 100)}%
+                </p>
+                <div className="mt-3 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleDownload(item.cleaned_data_id, "csv")}
+                    disabled={downloadingId === item.cleaned_data_id}
+                    className="inline-flex items-center gap-1 rounded-md bg-teal-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-700 disabled:opacity-60"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    CSV
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDownload(item.cleaned_data_id, "json")}
+                    disabled={downloadingId === item.cleaned_data_id}
+                    className="rounded-md border border-clay-300 px-3 py-1.5 text-xs font-semibold text-clay-700 hover:bg-clay-100 disabled:opacity-60 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+                  >
+                    JSON
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }

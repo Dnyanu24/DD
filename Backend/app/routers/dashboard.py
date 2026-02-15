@@ -93,9 +93,13 @@ async def get_ceo_dashboard(user: User, db: Session) -> Dict[str, Any]:
     """CEO Dashboard: Company-wide aggregated view"""
 
     # Company overview
-    total_sectors = db.query(func.count(Sector.id)).scalar()
-    total_products = db.query(func.count(Product.id)).scalar()
-    total_uploads = db.query(func.count(RawData.id)).scalar()
+    company_sector_ids = [row[0] for row in db.query(Sector.id).filter(Sector.company_id == user.company_id).all()]
+    if not company_sector_ids:
+        company_sector_ids = [-1]
+
+    total_sectors = db.query(func.count(Sector.id)).filter(Sector.company_id == user.company_id).scalar()
+    total_products = db.query(func.count(Product.id)).join(Sector, Product.sector_id == Sector.id).filter(Sector.company_id == user.company_id).scalar()
+    total_uploads = db.query(func.count(RawData.id)).filter(RawData.sector_id.in_(company_sector_ids)).scalar()
 
     # Sector performance comparison
     sector_stats = db.query(
@@ -105,11 +109,13 @@ async def get_ceo_dashboard(user: User, db: Session) -> Dict[str, Any]:
     ).join(RawData, Sector.id == RawData.sector_id)\
      .outerjoin(CleanedData, RawData.id == CleanedData.raw_data_id)\
      .outerjoin(DataQualityScore, CleanedData.id == DataQualityScore.cleaned_data_id)\
+     .filter(Sector.company_id == user.company_id)\
      .group_by(Sector.id, Sector.name).all()
 
     # AI recommendations
     recommendations = db.query(AIRecommendation)\
         .join(AIPrediction, AIRecommendation.prediction_id == AIPrediction.id)\
+        .filter(AIPrediction.sector_id.in_(company_sector_ids))\
         .order_by(AIRecommendation.created_at.desc()).limit(5).all()
 
     # Company-wide predictions summary
@@ -117,7 +123,7 @@ async def get_ceo_dashboard(user: User, db: Session) -> Dict[str, Any]:
         AIPrediction.prediction_type,
         func.avg(AIPrediction.confidence).label('avg_confidence'),
         func.count(AIPrediction.id).label('count')
-    ).group_by(AIPrediction.prediction_type).all()
+    ).filter(AIPrediction.sector_id.in_(company_sector_ids)).group_by(AIPrediction.prediction_type).all()
 
     return {
         "role": "ceo",
@@ -155,14 +161,23 @@ async def get_admin_dashboard(user: User, db: Session) -> Dict[str, Any]:
     """Admin Dashboard: System monitoring and user management"""
 
     # User statistics
-    total_users = db.query(func.count(User.id)).scalar()
+    total_users = db.query(func.count(User.id)).filter(User.company_id == user.company_id).scalar()
     users_by_role = db.query(User.role, func.count(User.id))\
+        .filter(User.company_id == user.company_id)\
         .group_by(User.role).all()
 
     # System health
-    total_raw_data = db.query(func.count(RawData.id)).scalar()
-    total_cleaned_data = db.query(func.count(CleanedData.id)).scalar()
-    avg_system_quality = db.query(func.avg(DataQualityScore.score)).scalar() or 0
+    company_sector_ids = [row[0] for row in db.query(Sector.id).filter(Sector.company_id == user.company_id).all()]
+    if not company_sector_ids:
+        company_sector_ids = [-1]
+    total_raw_data = db.query(func.count(RawData.id)).filter(RawData.sector_id.in_(company_sector_ids)).scalar()
+    total_cleaned_data = db.query(func.count(CleanedData.id))\
+        .join(RawData, CleanedData.raw_data_id == RawData.id)\
+        .filter(RawData.sector_id.in_(company_sector_ids)).scalar()
+    avg_system_quality = db.query(func.avg(DataQualityScore.score))\
+        .join(CleanedData, DataQualityScore.cleaned_data_id == CleanedData.id)\
+        .join(RawData, CleanedData.raw_data_id == RawData.id)\
+        .filter(RawData.sector_id.in_(company_sector_ids)).scalar() or 0
 
     # Recent feedback
     recent_feedback = db.query(FeedbackLog)\

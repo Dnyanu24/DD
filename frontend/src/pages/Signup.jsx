@@ -10,13 +10,14 @@ export default function Signup() {
     password: "",
     confirmPassword: "",
     role: "ceo",
-    company_id: 1,
+    company_id: "company_01",
   });
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("Registration successful.");
   const navigate = useNavigate();
 
   const roles = [
@@ -30,7 +31,7 @@ export default function Signup() {
     const { name, value } = e.target;
     setFormData(prev => ({
       ...prev,
-      [name]: name === "company_id" ? parseInt(value) || 1 : value
+      [name]: value
     }));
   };
 
@@ -54,6 +55,7 @@ export default function Signup() {
       });
       
       if (result) {
+        setSuccessMessage(result.message || "Registration submitted successfully.");
         setSuccess(true);
         setTimeout(() => {
           navigate("/login");
@@ -73,8 +75,8 @@ export default function Signup() {
           <div className="mx-auto w-16 h-16 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center mb-4">
             <CheckCircle className="w-8 h-8 text-green-600 dark:text-green-400" />
           </div>
-          <h2 className="text-2xl font-bold text-theme-primary mb-2">Registration Successful!</h2>
-          <p className="text-theme-muted">Redirecting to login...</p>
+          <h2 className="text-2xl font-bold text-theme-primary mb-2">Registration Update</h2>
+          <p className="text-theme-muted">{successMessage}</p>
         </div>
       </div>
     );
@@ -226,19 +228,19 @@ export default function Signup() {
           {/* Company ID */}
           <div>
             <label htmlFor="company_id" className="block text-sm font-medium text-theme-secondary mb-1">
-              Company ID
+              Company ID (Format: company_01)
             </label>
             <div className="relative">
               <Building className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-theme-muted" />
               <input
                 id="company_id"
                 name="company_id"
-                type="number"
+                type="text"
                 required
                 value={formData.company_id}
                 onChange={handleChange}
                 className="block w-full pl-10 pr-4 py-3 bg-theme-secondary border border-theme-light rounded-lg text-theme-primary placeholder-theme-muted focus:outline-none focus:ring-2 focus:ring-accent-primary focus:border-transparent transition-all"
-                placeholder="Enter company ID"
+                placeholder="company_01"
               />
             </div>
           </div>

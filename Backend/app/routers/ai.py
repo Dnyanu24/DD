@@ -28,6 +28,18 @@ def get_db():
         db.close()
 
 
+def _allowed_sector_ids(db: Session, current_user: User) -> List[int]:
+    query = db.query(Sector.id).filter(Sector.company_id == current_user.company_id)
+    if current_user.role == "sector_head":
+        query = query.filter(Sector.id == current_user.sector_id)
+    return [row[0] for row in query.all()]
+
+
+def _ensure_sector_access(db: Session, current_user: User, sector_id: int) -> None:
+    if sector_id not in _allowed_sector_ids(db, current_user):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat_assistant(
     payload: ChatRequest,
@@ -36,6 +48,8 @@ async def chat_assistant(
 ):
     """Simple context-aware assistant for SDAS without external LLM dependency."""
     text = (payload.message or "").strip().lower()
+    role_raw = (getattr(current_user, "role", "") or "").strip()
+    role_key = role_raw.lower().replace(" ", "_")
     if not text:
         return {
             "reply": "Please type a question about uploads, cleaning, reports, or visualizations.",
@@ -46,10 +60,18 @@ async def chat_assistant(
             ],
         }
 
-    total_raw = db.query(RawData).count()
-    total_cleaned = db.query(CleanedData).count()
-    latest_raw = db.query(RawData).order_by(RawData.uploaded_at.desc()).first()
-    latest_cleaned = db.query(CleanedData).order_by(CleanedData.cleaned_at.desc()).first()
+    sector_ids = _allowed_sector_ids(db, current_user)
+    if not sector_ids:
+        sector_ids = [-1]
+    total_raw = db.query(RawData).filter(RawData.sector_id.in_(sector_ids)).count()
+    total_cleaned = db.query(CleanedData)\
+        .join(RawData, CleanedData.raw_data_id == RawData.id)\
+        .filter(RawData.sector_id.in_(sector_ids)).count()
+    latest_raw = db.query(RawData).filter(RawData.sector_id.in_(sector_ids)).order_by(RawData.uploaded_at.desc()).first()
+    latest_cleaned = db.query(CleanedData)\
+        .join(RawData, CleanedData.raw_data_id == RawData.id)\
+        .filter(RawData.sector_id.in_(sector_ids))\
+        .order_by(CleanedData.cleaned_at.desc()).first()
     latest_quality = round((latest_cleaned.quality_score * 100), 2) if latest_cleaned else 0
 
     if "upload" in text or "dataset" in text:
@@ -58,6 +80,14 @@ async def chat_assistant(
             f"{total_cleaned} datasets have cleaned output. "
             f"The latest upload id is {latest_raw.id if latest_raw else 'N/A'}."
         )
+        role_hint = {
+            "ceo": "You can compare datasets across sectors from dashboard and reports.",
+            "data_analyst": "You can move directly to cleaning after selecting a dataset.",
+            "sales_manager": "You can focus on visualization and report pages for sales insights.",
+            "sector_head": "You can track only your sector data and run cleaning for your team.",
+        }.get(role_key, "")
+        if role_hint:
+            reply = f"{reply} {role_hint}"
         return {
             "reply": reply,
             "suggestions": [
@@ -74,6 +104,11 @@ async def chat_assistant(
             "Use full_pipeline for most cases, missing_values for null-heavy data, "
             "duplicates for repeated rows, and outliers for distribution cleanup."
         )
+        if role_key == "sales_manager":
+            reply = (
+                f"{reply} If cleaning controls are restricted for your role, "
+                "coordinate with Data Analyst or Sector Head and monitor final quality in visualizations."
+            )
         return {
             "reply": reply,
             "suggestions": [
@@ -131,8 +166,7 @@ async def predict_sales(
 ):
     """Generate sales/demand forecasting predictions"""
 
-    if current_user.role == 'sector_head' and current_user.sector_id != sector_id:
-        raise HTTPException(status_code=403, detail="Access denied")
+    _ensure_sector_access(db, current_user, sector_id)
 
     # Get cleaned data for the sector
     cleaned_data = db.query(CleanedData)\
@@ -182,8 +216,7 @@ async def detect_anomalies(
 ):
     """Detect trends and anomalies in data"""
 
-    if current_user.role == 'sector_head' and current_user.sector_id != sector_id:
-        raise HTTPException(status_code=403, detail="Access denied")
+    _ensure_sector_access(db, current_user, sector_id)
 
     # Get cleaned data
     cleaned_data = db.query(CleanedData)\
@@ -223,8 +256,7 @@ async def predict_risk(
 ):
     """Predict risk using machine learning"""
 
-    if current_user.role == 'sector_head' and current_user.sector_id != sector_id:
-        raise HTTPException(status_code=403, detail="Access denied")
+    _ensure_sector_access(db, current_user, sector_id)
 
     # Get cleaned data
     cleaned_data = db.query(CleanedData)\
@@ -262,8 +294,7 @@ async def generate_recommendations(
 ):
     """Generate AI-powered recommendations based on recent predictions"""
 
-    if current_user.role == 'sector_head' and current_user.sector_id != sector_id:
-        raise HTTPException(status_code=403, detail="Access denied")
+    _ensure_sector_access(db, current_user, sector_id)
 
     # Get recent predictions for the sector
     recent_predictions = db.query(AIPrediction)\
@@ -309,7 +340,7 @@ async def rank_sectors(
     """Rank sectors based on performance metrics"""
 
     # Get all sectors and their data
-    sectors = db.query(Sector).all()
+    sectors = db.query(Sector).filter(Sector.company_id == current_user.company_id).all()
     sector_data = {}
 
     for sector in sectors:
@@ -351,11 +382,12 @@ async def process_nl_query(
             .first()
         if sector_data:
             available_data['sector_data'] = sector_data.cleaned_data
-    elif current_user.role == 'ceo':
+    elif current_user.role in ['ceo', 'admin']:
         # Company-wide data summary
+        company_sector_ids = _allowed_sector_ids(db, current_user)
         available_data['company_summary'] = {
-            'total_sectors': db.query(Sector).count(),
-            'total_predictions': db.query(AIPrediction).count()
+            'total_sectors': db.query(Sector).filter(Sector.company_id == current_user.company_id).count(),
+            'total_predictions': db.query(AIPrediction).filter(AIPrediction.sector_id.in_(company_sector_ids)).count()
         }
 
     ai_engine = AIPredictionEngine()
@@ -372,8 +404,7 @@ async def get_predictions(
 ):
     """Get prediction history for a sector"""
 
-    if current_user.role == 'sector_head' and current_user.sector_id != sector_id:
-        raise HTTPException(status_code=403, detail="Access denied")
+    _ensure_sector_access(db, current_user, sector_id)
 
     predictions = db.query(AIPrediction)\
         .filter(AIPrediction.sector_id == sector_id)\
@@ -400,8 +431,7 @@ async def get_recommendations(
 ):
     """Get AI recommendations for a sector"""
 
-    if current_user.role == 'sector_head' and current_user.sector_id != sector_id:
-        raise HTTPException(status_code=403, detail="Access denied")
+    _ensure_sector_access(db, current_user, sector_id)
 
     recommendations = db.query(AIRecommendation)\
         .join(AIPrediction)\

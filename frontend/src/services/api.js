@@ -27,8 +27,9 @@ async function requestWithBaseFallback(path, options = {}, policy = {}) {
   const { fallbackOnStatus = [404, 502, 503, 504] } = policy;
   let lastNetworkError = null;
   let lastResponse = null;
+  const candidateUrls = Array.from(new Set([BASE_URL, ...FALLBACK_BASE_URLS]));
 
-  for (const candidateBaseUrl of FALLBACK_BASE_URLS) {
+  for (const candidateBaseUrl of candidateUrls) {
     try {
       const res = await fetch(`${candidateBaseUrl}${path}`, options);
       if (res.ok) {
@@ -123,7 +124,8 @@ export async function register(userData) {
       username: userData.username,
       password: userData.password,
       role: userData.role.toLowerCase().replace(" ", "_"),
-      company_id: 1,
+      company_id: String(userData.company_id || "").trim(),
+      sector_id: userData.sector_id ? Number(userData.sector_id) : null,
     };
     
     console.log("Register request to:", `${BASE_URL}/api/auth/register`);
@@ -183,6 +185,35 @@ export async function getCurrentUser() {
   }
 
   return res.json();
+}
+
+export async function getJoinRequests() {
+  const res = await requestWithBaseFallback(`/api/auth/join-requests`, {
+    headers: {
+      ...getAuthHeaders(),
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.detail || data?.message || "Failed to fetch join requests");
+  }
+  return data;
+}
+
+export async function reviewJoinRequest(requestId, action, sectorId = null) {
+  const res = await requestWithBaseFallback(`/api/auth/join-requests/${requestId}/review`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify({ action, sector_id: sectorId }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.detail || data?.message || "Failed to review join request");
+  }
+  return data;
 }
 
 export async function getAvailableRoles() {
@@ -283,13 +314,70 @@ export async function getDataCleaningStats() {
   return res.json();
 }
 
-export async function getUploadedData() {
-  const res = await fetch(`${BASE_URL}/api/upload/uploaded-data`, {
+export async function getCleanedDatasets() {
+  const res = await fetch(`${BASE_URL}/api/analysis/cleaned-datasets`, {
     headers: {
       ...getAuthHeaders(),
     },
   });
-  return res.json();
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.detail || data?.message || "Failed to load cleaned datasets");
+  }
+  return data;
+}
+
+export async function downloadCleanedDataset(cleanedDataId, format = "csv") {
+  const res = await fetch(`${BASE_URL}/api/analysis/cleaned-datasets/${cleanedDataId}/download?format=${encodeURIComponent(format)}`, {
+    headers: {
+      ...getAuthHeaders(),
+    },
+  });
+  if (!res.ok) {
+    let message = "Download failed";
+    try {
+      const data = await res.json();
+      message = data?.detail || data?.message || message;
+    } catch {
+      const text = await res.text();
+      if (text) message = text;
+    }
+    throw new Error(message);
+  }
+  const blob = await res.blob();
+  const disposition = res.headers.get("content-disposition") || "";
+  const match = disposition.match(/filename="?([^";]+)"?/i);
+  return {
+    blob,
+    filename: match?.[1] || `cleaned_${cleanedDataId}.${format}`,
+  };
+}
+
+export async function getUploadedData() {
+  const res = await requestWithBaseFallback(`/api/upload/uploaded-data`, {
+    headers: {
+      ...getAuthHeaders(),
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.detail || data?.message || "Failed to load uploaded datasets");
+  }
+  return data;
+}
+
+export async function deleteUploadedDataset(dataId) {
+  const res = await requestWithBaseFallback(`/api/upload/uploaded-data/${dataId}`, {
+    method: "DELETE",
+    headers: {
+      ...getAuthHeaders(),
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.detail || data?.message || "Failed to delete dataset");
+  }
+  return data;
 }
 
 export async function runDataCleaning(dataId, algorithm) {
@@ -386,6 +474,22 @@ export async function getAIPredictions(sectorId) {
     },
   });
   return res.json();
+}
+
+export async function analyzeDataErrors(formData) {
+  const res = await requestWithBaseFallback(`/api/analysis/error-profile`, {
+    method: "POST",
+    headers: {
+      ...getAuthHeaders(),
+    },
+    body: formData,
+  });
+  const contentType = res.headers.get("content-type") || "";
+  const data = contentType.includes("application/json") ? await res.json() : { detail: await res.text() };
+  if (!res.ok) {
+    throw new Error(data?.detail || data?.message || "Error analysis failed");
+  }
+  return data;
 }
 
 export async function getAIModels() {

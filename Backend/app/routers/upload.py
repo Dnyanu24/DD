@@ -71,6 +71,13 @@ def _adaptive_upload_config(db: Session, df: pd.DataFrame) -> dict:
 
     return config
 
+
+def _user_sector_ids_query(db: Session, current_user: User):
+    query = db.query(Sector.id).filter(Sector.company_id == current_user.company_id)
+    if current_user.role == "sector_head":
+        query = query.filter(Sector.id == current_user.sector_id)
+    return query
+
 @router.post("/upload")
 async def upload_data(
     file: UploadFile = File(...),
@@ -81,7 +88,12 @@ async def upload_data(
 ):
     """Upload multi-sector data with metadata tagging"""
 
-    # Validate sector access for sector heads
+    sector = db.query(Sector).filter(
+        Sector.id == sector_id,
+        Sector.company_id == current_user.company_id
+    ).first()
+    if not sector:
+        raise HTTPException(status_code=403, detail="Access denied: Sector not in your company")
     if current_user.role == 'sector_head' and current_user.sector_id != sector_id:
         raise HTTPException(status_code=403, detail="Access denied: Can only upload to assigned sector")
 
@@ -97,17 +109,6 @@ async def upload_data(
         raise HTTPException(status_code=400, detail="Unsupported file format")
 
     # Metadata tagging
-    metadata = {
-        'filename': file.filename,
-        'sector_id': sector_id,
-        'product_id': product_id,
-        'uploaded_by': current_user.id,
-        'uploaded_at': datetime.utcnow().isoformat(),
-        'row_count': len(df),
-        'column_count': len(df.columns),
-        'columns': list(df.columns)
-    }
-
     # Store raw data
     raw_data_entry = RawData(
         sector_id=sector_id,
@@ -191,24 +192,33 @@ async def upload_data(
 @router.get("/sectors")
 async def get_sectors(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Get available sectors for upload"""
-    existing_count = db.query(Sector).count()
+    existing_count = db.query(Sector).filter(Sector.company_id == current_user.company_id).count()
     if existing_count == 0:
-        bootstrap_company_id = current_user.company_id or 1
         default_sectors = ["Sales", "Operations", "Finance", "HR"]
         for name in default_sectors:
-            db.add(Sector(name=name, company_id=bootstrap_company_id))
+            db.add(Sector(name=name, company_id=current_user.company_id))
         db.commit()
 
+    sector_query = db.query(Sector).filter(Sector.company_id == current_user.company_id)
     if current_user.role == 'sector_head':
-        sectors = db.query(Sector).filter(Sector.id == current_user.sector_id).all()
-    else:
-        sectors = db.query(Sector).all()
+        sector_query = sector_query.filter(Sector.id == current_user.sector_id)
+    sectors = sector_query.all()
 
     return [{"id": s.id, "name": s.name} for s in sectors]
 
 @router.get("/products/{sector_id}")
-async def get_products(sector_id: int, db: Session = Depends(get_db)):
+async def get_products(
+    sector_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
     """Get products for a sector"""
+    sector = db.query(Sector).filter(
+        Sector.id == sector_id,
+        Sector.company_id == current_user.company_id
+    ).first()
+    if not sector:
+        raise HTTPException(status_code=403, detail="Access denied")
     products = db.query(Product).filter(Product.sector_id == sector_id).all()
     return [{"id": p.id, "name": p.name} for p in products]
 
@@ -220,8 +230,10 @@ async def get_uploaded_data(
     """Get all uploaded data with metadata"""
     
     try:
-        # Query raw data with related info
-        raw_data = db.query(RawData).all()
+        allowed_sector_ids = [row[0] for row in _user_sector_ids_query(db, current_user).all()]
+        if not allowed_sector_ids:
+            return {"data": [], "total_count": 0}
+        raw_data = db.query(RawData).filter(RawData.sector_id.in_(allowed_sector_ids)).all()
         
         result = []
         for data in raw_data:
@@ -278,3 +290,30 @@ async def get_uploaded_data(
             "total_count": 0,
             "error": str(e)
         }
+
+
+@router.delete("/uploaded-data/{data_id}")
+async def delete_uploaded_dataset(
+    data_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Delete an uploaded dataset and its cleaned derivatives."""
+    raw_data = db.query(RawData).filter(RawData.id == data_id).first()
+    if not raw_data:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    sector = db.query(Sector).filter(Sector.id == raw_data.sector_id).first()
+    if not sector or sector.company_id != current_user.company_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+    if current_user.role == "sector_head" and raw_data.sector_id != current_user.sector_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    cleaned_rows = db.query(CleanedData).filter(CleanedData.raw_data_id == raw_data.id).all()
+    for cleaned in cleaned_rows:
+        db.query(DataQualityScore).filter(DataQualityScore.cleaned_data_id == cleaned.id).delete()
+        db.delete(cleaned)
+
+    db.delete(raw_data)
+    db.commit()
+    return {"message": "Dataset deleted successfully", "deleted_data_id": data_id}

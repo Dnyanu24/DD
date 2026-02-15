@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 from sqlalchemy.orm import Session
 from typing import Dict, Any, Optional, Callable, List
 import pandas as pd
@@ -7,9 +7,10 @@ import numpy as np
 import json
 import asyncio
 from datetime import datetime
+import re
 
 from app.database import SessionLocal
-from app.models import RawData, CleanedData, AIPrediction, AIRecommendation, DataQualityScore
+from app.models import RawData, CleanedData, AIPrediction, AIRecommendation, DataQualityScore, Sector
 from app.services.data_cleaning import DataCleaningEngine
 from app.services.ai_predictions import AIPredictionEngine
 from app.services.feedback_learning import FeedbackLearningEngine
@@ -53,6 +54,141 @@ def _to_json_safe_records(df: pd.DataFrame) -> List[Dict[str, Any]]:
         normalized.append(normalized_row)
     return normalized
 
+
+def _normalize_column_name(name: str) -> str:
+    normalized = re.sub(r"[^a-zA-Z0-9]+", "_", str(name).strip().lower())
+    return normalized.strip("_") or "column"
+
+
+def _sanitize_sector_key(value: Any) -> str:
+    text = str(value).strip().lower()
+    text = re.sub(r"[^a-z0-9]+", "_", text)
+    return text.strip("_") or "unknown"
+
+
+def _structure_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """Convert partially unstructured tabular data into a structured dataframe."""
+    structured = df.copy()
+
+    expanded_columns: Dict[str, List[Any]] = {}
+    drop_columns = []
+    for col in list(structured.columns):
+        series = structured[col]
+        parsed_values = []
+        can_expand = False
+        for value in series:
+            if isinstance(value, dict):
+                parsed_values.append(value)
+                can_expand = True
+            elif isinstance(value, str):
+                text = value.strip()
+                if text.startswith("{") and text.endswith("}"):
+                    try:
+                        parsed = json.loads(text)
+                        if isinstance(parsed, dict):
+                            parsed_values.append(parsed)
+                            can_expand = True
+                        else:
+                            parsed_values.append({})
+                    except Exception:
+                        parsed_values.append({})
+                else:
+                    parsed_values.append({})
+            else:
+                parsed_values.append({})
+
+        if can_expand:
+            keys = set()
+            for item in parsed_values:
+                keys.update(item.keys())
+            for key in keys:
+                expanded_key = f"{col}_{key}"
+                expanded_columns[expanded_key] = [item.get(key) for item in parsed_values]
+            drop_columns.append(col)
+            continue
+
+        if series.apply(lambda x: isinstance(x, list)).any():
+            structured[col] = series.apply(
+                lambda x: json.dumps(x, ensure_ascii=True) if isinstance(x, list) else x
+            )
+
+    if expanded_columns:
+        structured = structured.drop(columns=drop_columns, errors="ignore")
+        for name, values in expanded_columns.items():
+            structured[name] = values
+
+    renamed_cols = []
+    used = {}
+    for col in structured.columns:
+        base = _normalize_column_name(col)
+        if base in used:
+            used[base] += 1
+            renamed_cols.append(f"{base}_{used[base]}")
+        else:
+            used[base] = 1
+            renamed_cols.append(base)
+    structured.columns = renamed_cols
+
+    return structured
+
+
+def _split_by_sector(df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
+    preferred = ["sector", "sector_name", "business_sector", "department", "division"]
+    sector_column = None
+    for col in preferred:
+        if col in df.columns:
+            sector_column = col
+            break
+    if not sector_column:
+        for col in df.columns:
+            if "sector" in col:
+                sector_column = col
+                break
+
+    if not sector_column:
+        return {"all": df}
+
+    working = df.copy()
+    working[sector_column] = working[sector_column].fillna("unknown").astype(str).str.strip()
+    unique_values = [v for v in working[sector_column].unique().tolist() if v]
+    if len(unique_values) <= 1:
+        return {"all": working}
+
+    grouped = {}
+    for value, subset in working.groupby(sector_column):
+        key = _sanitize_sector_key(value)
+        grouped[key] = subset.reset_index(drop=True)
+    return grouped
+
+
+def _allowed_sector_ids(db: Session, current_user: User) -> List[int]:
+    query = db.query(Sector.id).filter(Sector.company_id == current_user.company_id)
+    if current_user.role == "sector_head":
+        query = query.filter(Sector.id == current_user.sector_id)
+    return [row[0] for row in query.all()]
+
+
+def _get_accessible_raw_data(db: Session, data_id: int, current_user: User) -> Optional[RawData]:
+    sector_ids = _allowed_sector_ids(db, current_user)
+    if not sector_ids:
+        return None
+    return db.query(RawData).filter(
+        RawData.id == data_id,
+        RawData.sector_id.in_(sector_ids)
+    ).first()
+
+
+def _load_dataframe_from_upload(file: UploadFile) -> pd.DataFrame:
+    filename = (file.filename or "").lower()
+    if filename.endswith(".csv"):
+        return pd.read_csv(file.file)
+    if filename.endswith(".xlsx") or filename.endswith(".xls"):
+        return pd.read_excel(file.file)
+    if filename.endswith(".json"):
+        data = json.load(file.file)
+        return pd.DataFrame(data)
+    raise HTTPException(status_code=400, detail="Unsupported file format")
+
 def _derive_learning_strategy(db: Session, df: pd.DataFrame) -> Dict[str, Any]:
     learning_engine = FeedbackLearningEngine()
     numeric_cols = df.select_dtypes(include=[np.number]).columns
@@ -73,6 +209,11 @@ def _derive_learning_strategy(db: Session, df: pd.DataFrame) -> Dict[str, Any]:
         sum(1 for row in quality_rows if row.score >= 0.90) / len(quality_rows)
         if quality_rows else 0.0
     )
+    quality_trend = 0.0
+    if len(quality_rows) >= 6:
+        recent_scores = np.array([row.score for row in quality_rows[:20]][::-1], dtype=float)
+        x_axis = np.arange(len(recent_scores), dtype=float)
+        quality_trend = float(np.polyfit(x_axis, recent_scores, 1)[0])
 
     if avg_quality >= 0.90 or high_quality_rate >= 0.60:
         config["impute_strategy"] = "ml"
@@ -82,12 +223,18 @@ def _derive_learning_strategy(db: Session, df: pd.DataFrame) -> Dict[str, Any]:
     elif avg_quality < 0.75 and quality_rows:
         config["impute_strategy"] = "median"
         config["outlier_method"] = "iqr"
+    elif quality_trend < -0.01:
+        # Feedback-learning correction when quality trend drifts down.
+        config["impute_strategy"] = "ml"
+        config["outlier_method"] = "zscore"
+        config["clean_text"] = True
 
     return {
         "config": config,
         "history": {
             "historical_quality_avg": round(avg_quality, 4),
             "high_quality_rate": round(high_quality_rate, 4),
+            "quality_trend_slope": round(quality_trend, 6),
             "history_size": len(quality_rows),
         },
     }
@@ -188,6 +335,61 @@ def _persist_cleaned_data(
         "quality_score": round(cleaned_entry.quality_score, 4),
     }
 
+
+def _persist_cleaned_variants(
+    db: Session,
+    data_id: int,
+    algorithm: str,
+    structured_df: pd.DataFrame,
+    quality_scores: Dict[str, float],
+) -> Dict[str, Any]:
+    primary = _persist_cleaned_data(
+        db=db,
+        data_id=data_id,
+        cleaned_df=structured_df,
+        algorithm=algorithm,
+        quality_scores=quality_scores,
+    )
+
+    split_map = _split_by_sector(structured_df)
+    cleaned_datasets = [
+        {
+            "cleaned_data_id": primary["cleaned_data_id"],
+            "label": "all",
+            "algorithm": algorithm,
+            "row_count": len(structured_df),
+            "quality_score": primary["quality_score"],
+        }
+    ]
+
+    for label, subset in split_map.items():
+        if label == "all":
+            continue
+        variant_algorithm = f"{algorithm}__sector__{label}"
+        persisted = _persist_cleaned_data(
+            db=db,
+            data_id=data_id,
+            cleaned_df=subset,
+            algorithm=variant_algorithm,
+            quality_scores=quality_scores,
+        )
+        cleaned_datasets.append(
+            {
+                "cleaned_data_id": persisted["cleaned_data_id"],
+                "label": label,
+                "algorithm": variant_algorithm,
+                "row_count": len(subset),
+                "quality_score": persisted["quality_score"],
+            }
+        )
+
+    return {
+        "primary_cleaned_data_id": primary["cleaned_data_id"],
+        "quality_score": primary["quality_score"],
+        "cleaned_datasets": cleaned_datasets,
+        "split_count": len(cleaned_datasets),
+    }
+
 @router.post("/analyze")
 async def analyze_upload(
     file: UploadFile = File(...),
@@ -198,17 +400,11 @@ async def analyze_upload(
     db: Session = Depends(get_db)
 ):
     """Analyze uploaded file directly without storing"""
-    
-    # Read file
-    if file.filename.endswith('.csv'):
-        df = pd.read_csv(file.file)
-    elif file.filename.endswith('.xlsx') or file.filename.endswith('.xls'):
-        df = pd.read_excel(file.file)
-    elif file.filename.endswith('.json'):
-        data = json.load(file.file)
-        df = pd.DataFrame(data)
-    else:
-        raise HTTPException(status_code=400, detail="Unsupported file format")
+    allowed_sector_ids = _allowed_sector_ids(db, current_user)
+    if sector_id not in allowed_sector_ids:
+        raise HTTPException(status_code=403, detail="Access denied for sector")
+
+    df = _load_dataframe_from_upload(file)
     
     results = {}
     
@@ -260,14 +456,10 @@ async def analyze_data(
 
     """Advanced data analysis with ML algorithms"""
 
-    # Get raw data
-    raw_data = db.query(RawData).filter(RawData.id == data_id).first()
+    # Get raw data scoped to user's company/role
+    raw_data = _get_accessible_raw_data(db, data_id, current_user)
     if not raw_data:
         raise HTTPException(status_code=404, detail="Data not found")
-
-    # Check access permissions
-    if current_user.role == 'sector_head' and raw_data.sector_id != current_user.sector_id:
-        raise HTTPException(status_code=403, detail="Access denied")
 
     # Convert stored JSON back to DataFrame
     df = pd.DataFrame(raw_data.data)
@@ -372,6 +564,75 @@ async def analyze_data(
         "message": "Analysis completed successfully"
     }
 
+
+@router.post("/error-profile")
+async def error_profile(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+):
+    """Analyze dataset quality issues for visualization."""
+    df = _load_dataframe_from_upload(file)
+    total_rows = int(len(df))
+    total_columns = int(len(df.columns))
+    total_cells = int(total_rows * total_columns) if total_rows and total_columns else 0
+
+    missing_cells = int(df.isna().sum().sum()) if total_cells else 0
+    duplicate_rows = int(df.duplicated().sum()) if total_rows else 0
+
+    outlier_count = 0
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    for col in numeric_cols:
+        series = df[col].dropna()
+        if len(series) < 4:
+            continue
+        q1 = series.quantile(0.25)
+        q3 = series.quantile(0.75)
+        iqr = q3 - q1
+        if iqr == 0:
+            continue
+        lower = q1 - 1.5 * iqr
+        upper = q3 + 1.5 * iqr
+        outlier_count += int(((series < lower) | (series > upper)).sum())
+
+    invalid_format_count = 0
+    for col in df.select_dtypes(include=["object"]).columns:
+        series = df[col].dropna().astype(str).str.strip()
+        if series.empty:
+            continue
+        lower_series = series.str.lower()
+        invalid_mask = lower_series.isin({"", "na", "n/a", "null", "none", "nan", "undefined"})
+        invalid_format_count += int(invalid_mask.sum())
+
+    issue_breakdown = [
+        {"name": "Missing Values", "count": missing_cells},
+        {"name": "Duplicate Rows", "count": duplicate_rows},
+        {"name": "Outliers", "count": outlier_count},
+        {"name": "Invalid Formats", "count": invalid_format_count},
+    ]
+
+    column_missing = [
+        {"column": str(col), "missing": int(df[col].isna().sum())}
+        for col in df.columns
+    ]
+    column_missing.sort(key=lambda item: item["missing"], reverse=True)
+    column_missing = column_missing[:12]
+
+    clean_cells = max(total_cells - missing_cells, 0)
+    quality_score = round((clean_cells / total_cells) * 100, 2) if total_cells else 0
+
+    return {
+        "filename": file.filename,
+        "summary": {
+            "rows": total_rows,
+            "columns": total_columns,
+            "total_cells": total_cells,
+            "quality_score": quality_score,
+        },
+        "issues": issue_breakdown,
+        "column_missing": column_missing,
+        "message": "Error profile generated",
+    }
+
 @router.post("/clean/{data_id}")
 async def clean_data(
     data_id: int,
@@ -380,12 +641,9 @@ async def clean_data(
     db: Session = Depends(get_db)
 ):
     """Run data cleaning and persist cleaned output."""
-    raw_data = db.query(RawData).filter(RawData.id == data_id).first()
+    raw_data = _get_accessible_raw_data(db, data_id, current_user)
     if not raw_data:
         raise HTTPException(status_code=404, detail="Data not found")
-
-    if current_user.role == 'sector_head' and raw_data.sector_id != current_user.sector_id:
-        raise HTTPException(status_code=403, detail="Access denied")
 
     cleaning_engine = DataCleaningEngine()
     source_df = pd.DataFrame(raw_data.data)
@@ -399,12 +657,13 @@ async def clean_data(
         df_clean = source_df.copy()
         for step in steps:
             df_clean = step["operation"](df_clean)
+        structured_df = _structure_dataframe(df_clean)
 
-        persist_result = _persist_cleaned_data(
+        persist_result = _persist_cleaned_variants(
             db=db,
             data_id=data_id,
-            cleaned_df=df_clean,
             algorithm=algorithm,
+            structured_df=structured_df,
             quality_scores=cleaning_engine.get_quality_scores(),
         )
 
@@ -412,8 +671,8 @@ async def clean_data(
             "message": "Data cleaning completed",
             "data_id": data_id,
             "algorithm": algorithm,
-            "row_count": len(df_clean),
-            "column_count": len(df_clean.columns),
+            "row_count": len(structured_df),
+            "column_count": len(structured_df.columns),
             "adaptive_config": strategy_config,
             "learning_feedback": learning["history"],
             "quality_scores": cleaning_engine.get_quality_scores(),
@@ -433,12 +692,9 @@ async def clean_data_stream(
     db: Session = Depends(get_db)
 ):
     """Stream step-by-step cleaning progress using Server-Sent Events."""
-    raw_data = db.query(RawData).filter(RawData.id == data_id).first()
+    raw_data = _get_accessible_raw_data(db, data_id, current_user)
     if not raw_data:
         raise HTTPException(status_code=404, detail="Data not found")
-
-    if current_user.role == 'sector_head' and raw_data.sector_id != current_user.sector_id:
-        raise HTTPException(status_code=403, detail="Access denied")
 
     cleaning_engine = DataCleaningEngine()
     source_df = pd.DataFrame(raw_data.data)
@@ -490,19 +746,40 @@ async def clean_data_stream(
 
                 await asyncio.sleep(0.1)
 
-            persist_result = _persist_cleaned_data(
+            yield _sse_event("step", {
+                "step_id": "structuring",
+                "label": "Converting unstructured data to structured schema",
+                "status": "running",
+                "stage": "structuring",
+                "technique": "column flattening and normalization",
+                "progress": 96,
+                "timestamp": _utc_iso(),
+            })
+            structured_df = _structure_dataframe(df_clean)
+
+            persist_result = _persist_cleaned_variants(
                 db=db,
                 data_id=data_id,
-                cleaned_df=df_clean,
                 algorithm=algorithm,
+                structured_df=structured_df,
                 quality_scores=cleaning_engine.get_quality_scores(),
             )
+            yield _sse_event("step", {
+                "step_id": "structuring",
+                "label": "Converting unstructured data to structured schema",
+                "status": "completed",
+                "stage": "structuring",
+                "technique": "column flattening and normalization",
+                "progress": 100,
+                "timestamp": _utc_iso(),
+                "row_count": len(structured_df),
+            })
 
             yield _sse_event("complete", {
                 "data_id": data_id,
                 "algorithm": algorithm,
-                "row_count": len(df_clean),
-                "column_count": len(df_clean.columns),
+                "row_count": len(structured_df),
+                "column_count": len(structured_df.columns),
                 "quality_scores": cleaning_engine.get_quality_scores(),
                 "logs": cleaning_engine.get_logs(),
                 "adaptive_config": strategy_config,
@@ -527,6 +804,89 @@ async def clean_data_stream(
         },
     )
 
+
+@router.get("/cleaned-datasets")
+async def get_cleaned_datasets(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """List cleaned datasets available to the current user."""
+    sector_ids = _allowed_sector_ids(db, current_user)
+    if not sector_ids:
+        return {"data": [], "total_count": 0}
+
+    rows = db.query(CleanedData, RawData)\
+        .join(RawData, CleanedData.raw_data_id == RawData.id)\
+        .filter(RawData.sector_id.in_(sector_ids))\
+        .order_by(CleanedData.cleaned_at.desc())\
+        .all()
+
+    data = []
+    for cleaned, raw in rows:
+        algo = cleaned.cleaning_algorithm or "unknown"
+        sector_label = "all"
+        if "__sector__" in algo:
+            sector_label = algo.split("__sector__", 1)[1]
+        records = cleaned.cleaned_data if isinstance(cleaned.cleaned_data, list) else []
+        columns = list(records[0].keys()) if records and isinstance(records[0], dict) else []
+        data.append(
+            {
+                "cleaned_data_id": cleaned.id,
+                "raw_data_id": raw.id,
+                "algorithm": algo,
+                "sector_label": sector_label,
+                "row_count": len(records),
+                "column_count": len(columns),
+                "columns": columns,
+                "quality_score": cleaned.quality_score,
+                "cleaned_at": cleaned.cleaned_at.isoformat() if cleaned.cleaned_at else None,
+            }
+        )
+
+    return {"data": data, "total_count": len(data)}
+
+
+@router.get("/cleaned-datasets/{cleaned_data_id}/download")
+async def download_cleaned_dataset(
+    cleaned_data_id: int,
+    format: str = "csv",
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Download a cleaned dataset as CSV or JSON."""
+    sector_ids = _allowed_sector_ids(db, current_user)
+    if not sector_ids:
+        raise HTTPException(status_code=404, detail="Cleaned dataset not found")
+
+    row = db.query(CleanedData, RawData)\
+        .join(RawData, CleanedData.raw_data_id == RawData.id)\
+        .filter(
+            CleanedData.id == cleaned_data_id,
+            RawData.sector_id.in_(sector_ids)
+        ).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Cleaned dataset not found")
+
+    cleaned, raw = row
+    records = cleaned.cleaned_data if isinstance(cleaned.cleaned_data, list) else []
+    df = pd.DataFrame(records)
+    base_name = f"cleaned_raw_{raw.id}_{cleaned.id}"
+
+    if (format or "").lower() == "json":
+        payload = json.dumps(records, default=str)
+        return Response(
+            content=payload,
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{base_name}.json"'},
+        )
+
+    csv_payload = df.to_csv(index=False)
+    return Response(
+        content=csv_payload,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{base_name}.csv"'},
+    )
+
 @router.get("/insights/{sector_id}")
 async def get_sector_insights(
     sector_id: int,
@@ -536,7 +896,8 @@ async def get_sector_insights(
 
     """Get AI insights and predictions for a sector"""
 
-    if current_user.role == 'sector_head' and current_user.sector_id != sector_id:
+    allowed_sector_ids = _allowed_sector_ids(db, current_user)
+    if sector_id not in allowed_sector_ids:
         raise HTTPException(status_code=403, detail="Access denied")
 
     # Get recent predictions
@@ -580,8 +941,17 @@ async def get_cleaning_stats(
     """Get data cleaning statistics"""
     
     try:
-        # Get all cleaned data entries
-        cleaned_data = db.query(CleanedData).all()
+        allowed_sector_ids = _allowed_sector_ids(db, current_user)
+        if not allowed_sector_ids:
+            return {
+                "total_cleaned": 0,
+                "average_quality_score": 0,
+                "error_breakdown": [],
+                "recent_cleaning_jobs": []
+            }
+        cleaned_data = db.query(CleanedData)\
+            .join(RawData, CleanedData.raw_data_id == RawData.id)\
+            .filter(RawData.sector_id.in_(allowed_sector_ids)).all()
         
         # Calculate statistics
         total_cleaned = len(cleaned_data)

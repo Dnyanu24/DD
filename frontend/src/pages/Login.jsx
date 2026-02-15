@@ -33,7 +33,7 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-clay-50 dark:bg-dark-clay transition-colors duration-300">
+    <div className="min-h-screen flex items-center justify-center bg-theme-primary transition-colors duration-300 py-8">
 
       {/* Background Pattern */}
       <div className="absolute inset-0 overflow-hidden">
@@ -41,16 +41,16 @@ export default function Login() {
         <div className="absolute -bottom-1/2 -left-1/2 w-full h-full bg-gradient-to-tr from-teal-200/20 to-transparent rounded-full blur-3xl" />
       </div>
 
-      <div className="relative w-full max-w-md p-8 space-y-6 bg-white dark:bg-dark-clay rounded-2xl shadow-lg border border-clay-200 dark:border-clay-700 m-4">
+      <div className="relative w-full max-w-md p-8 space-y-6 bg-theme-card rounded-2xl shadow-theme border border-theme m-4">
         {/* Logo and Title */}
         <div className="text-center">
-          <div className="mx-auto w-16 h-16 rounded-2xl bg-clay-500 dark:bg-clay-600 flex items-center justify-center mb-4 shadow-lg">
+          <div className="mx-auto w-16 h-16 rounded-2xl accent-primary flex items-center justify-center mb-4 shadow-lg">
             <span className="text-3xl font-bold text-white">S</span>
           </div>
-          <h2 className="text-3xl font-bold text-clay-900 dark:text-clay-100">
+          <h2 className="text-3xl font-bold text-theme-primary">
             SDAS
           </h2>
-          <p className="mt-2 text-sm text-clay-600 dark:text-clay-400">
+          <p className="mt-2 text-sm text-theme-muted">
             Smart Data Analytics System
           </p>
         </div>
@@ -66,11 +66,11 @@ export default function Login() {
 
           {/* Username Field */}
           <div>
-            <label htmlFor="username" className="block text-sm font-medium text-clay-700 dark:text-clay-300 mb-1">
+            <label htmlFor="username" className="block text-sm font-medium text-theme-secondary mb-1">
               Username
             </label>
             <div className="relative">
-              <User className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-clay-500 dark:text-clay-400" />
+              <User className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-theme-muted" />
               <input
                 id="username"
                 name="username"
@@ -78,7 +78,7 @@ export default function Login() {
                 required
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                className="block w-full pl-10 pr-4 py-3 bg-clay-100 dark:bg-dark-warm border border-clay-200 dark:border-clay-600 rounded-lg text-clay-900 dark:text-clay-100 placeholder-clay-500 dark:placeholder-clay-400 focus:outline-none focus:ring-2 focus:ring-clay-500 focus:border-transparent transition-all"
+                className="block w-full pl-10 pr-4 py-3 bg-theme-secondary border border-theme-light rounded-lg text-theme-primary placeholder-theme-muted focus:outline-none focus:ring-2 focus:ring-accent-primary focus:border-transparent transition-all"
                 placeholder="Enter your username"
               />
             </div>
@@ -87,11 +87,11 @@ export default function Login() {
 
           {/* Password Field */}
           <div>
-            <label htmlFor="password" className="block text-sm font-medium text-clay-700 dark:text-clay-300 mb-1">
+            <label htmlFor="password" className="block text-sm font-medium text-theme-secondary mb-1">
               Password
             </label>
             <div className="relative">
-              <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-clay-500 dark:text-clay-400" />
+              <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-theme-muted" />
               <input
                 id="password"
                 name="password"
@@ -99,13 +99,13 @@ export default function Login() {
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="block w-full pl-10 pr-12 py-3 bg-clay-100 dark:bg-dark-warm border border-clay-200 dark:border-clay-600 rounded-lg text-clay-900 dark:text-clay-100 placeholder-clay-500 dark:placeholder-clay-400 focus:outline-none focus:ring-2 focus:ring-clay-500 focus:border-transparent transition-all"
+                className="block w-full pl-10 pr-12 py-3 bg-theme-secondary border border-theme-light rounded-lg text-theme-primary placeholder-theme-muted focus:outline-none focus:ring-2 focus:ring-accent-primary focus:border-transparent transition-all"
                 placeholder="Enter your password"
               />
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-1/2 transform -translate-y-1/2 text-clay-500 dark:text-clay-400 hover:text-clay-700 dark:hover:text-clay-300 transition-colors"
+                className="absolute right-3 top-1/2 transform -translate-y-1/2 text-theme-muted hover:text-theme-secondary transition-colors"
               >
                 {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
               </button>
@@ -120,14 +120,14 @@ export default function Login() {
                 id="remember-me"
                 name="remember-me"
                 type="checkbox"
-                className="h-4 w-4 text-clay-500 focus:ring-clay-500 border-clay-300 dark:border-clay-600 rounded bg-clay-100 dark:bg-dark-warm"
+                className="h-4 w-4 text-accent-primary focus:ring-accent-primary border-theme-light rounded bg-theme-secondary"
               />
-              <label htmlFor="remember-me" className="ml-2 block text-sm text-clay-700 dark:text-clay-300">
+              <label htmlFor="remember-me" className="ml-2 block text-sm text-theme-secondary">
                 Remember me
               </label>
             </div>
             <div className="text-sm">
-              <a href="#" className="font-medium text-clay-600 dark:text-clay-400 hover:text-clay-800 dark:hover:text-clay-200 transition-colors">
+              <a href="#" className="font-medium text-accent-primary hover:text-accent-hover transition-colors">
                 Forgot password?
               </a>
             </div>
@@ -138,7 +138,7 @@ export default function Login() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full flex justify-center items-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-clay-500 hover:bg-clay-600 dark:bg-clay-600 dark:hover:bg-clay-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-clay-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
+            className="w-full flex justify-center items-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-theme-inverse accent-primary hover:accent-hover focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-accent-primary disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
           >
             {loading ? (
               <span className="flex items-center">
@@ -175,8 +175,8 @@ export default function Login() {
         </form>
 
         {/* Demo Credentials */}
-        <div className="mt-6 p-4 bg-clay-100 dark:bg-dark-warm rounded-lg border border-clay-200 dark:border-clay-700">
-          <p className="text-xs text-clay-600 dark:text-clay-400 text-center">
+        <div className="mt-6 p-4 bg-theme-secondary rounded-lg border border-theme-light">
+          <p className="text-xs text-theme-muted text-center">
             <span className="font-semibold">Demo Credentials:</span>
             <br />
             Username: admin | Password: admin123
@@ -185,9 +185,9 @@ export default function Login() {
 
         {/* Sign Up Link */}
         <div className="text-center">
-          <p className="text-sm text-clay-600 dark:text-clay-400">
+          <p className="text-sm text-theme-muted">
             Don't have an account?{' '}
-            <Link to="/signup" className="font-medium text-clay-600 dark:text-clay-400 hover:text-clay-800 dark:hover:text-clay-200 transition-colors">
+            <Link to="/signup" className="font-medium text-accent-primary hover:text-accent-hover transition-colors">
               Sign up
             </Link>
           </p>
