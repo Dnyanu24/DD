@@ -13,7 +13,7 @@ import {
 } from "recharts";
 import KPICard from "../components/KPICard";
 import AIInsights from "../components/AIInsights";
-import { getJoinRequests, reviewJoinRequest } from "../services/api";
+import { createAnnouncement, getJoinRequests, reviewJoinRequest } from "../services/api";
 
 const defaultTrendData = [
   { month: "Jan", revenue: 120000 },
@@ -46,6 +46,9 @@ export default function CEODashboard({
   const [requestsError, setRequestsError] = useState("");
   const [sectorSelections, setSectorSelections] = useState({});
   const [reviewingId, setReviewingId] = useState(null);
+  const [announcementTitle, setAnnouncementTitle] = useState("");
+  const [announcementMessage, setAnnouncementMessage] = useState("");
+  const [postingAnnouncement, setPostingAnnouncement] = useState(false);
 
   const loadJoinRequests = async () => {
     setRequestsLoading(true);
@@ -80,8 +83,53 @@ export default function CEODashboard({
 
   const pendingRequests = joinRequests.filter((item) => item.status === "pending");
 
+  const handlePostAnnouncement = async () => {
+    if (!announcementTitle.trim() || !announcementMessage.trim()) return;
+    setPostingAnnouncement(true);
+    setRequestsError("");
+    try {
+      await createAnnouncement({
+        title: announcementTitle.trim(),
+        message: announcementMessage.trim(),
+      });
+      setAnnouncementTitle("");
+      setAnnouncementMessage("");
+    } catch (error) {
+      setRequestsError(error.message || "Failed to post announcement.");
+    } finally {
+      setPostingAnnouncement(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
+      <div className="bg-theme-card rounded-2xl p-6 shadow-lg transition-colors duration-300">
+        <h3 className="mb-4 text-lg font-semibold text-theme-primary">CEO Announcement</h3>
+        <div className="grid grid-cols-1 gap-3">
+          <input
+            value={announcementTitle}
+            onChange={(e) => setAnnouncementTitle(e.target.value)}
+            placeholder="Announcement title"
+            className="rounded-lg border border-theme-light bg-theme-secondary px-3 py-2 text-sm text-theme-primary"
+          />
+          <textarea
+            value={announcementMessage}
+            onChange={(e) => setAnnouncementMessage(e.target.value)}
+            placeholder="Announcement message to all company roles..."
+            rows={3}
+            className="rounded-lg border border-theme-light bg-theme-secondary px-3 py-2 text-sm text-theme-primary"
+          />
+          <button
+            type="button"
+            onClick={handlePostAnnouncement}
+            disabled={postingAnnouncement}
+            className="w-fit rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60"
+          >
+            {postingAnnouncement ? "Posting..." : "Post Announcement"}
+          </button>
+        </div>
+      </div>
+
       <div className="bg-theme-card rounded-2xl p-6 shadow-lg transition-colors duration-300">
         <div className="mb-4 flex items-center justify-between gap-3">
           <h3 className="text-lg font-semibold text-theme-primary">Company Join Requests</h3>

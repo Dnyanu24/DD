@@ -152,6 +152,35 @@ class FeedbackLog(Base):
     feedback_data = Column(JSON, nullable=False)
     timestamp = Column(DateTime, default=datetime.utcnow)
 
+
+class CompanyAnnouncement(Base):
+    __tablename__ = "company_announcements"
+    id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(Integer, ForeignKey("companies.id"), nullable=False)
+    title = Column(String(255), nullable=False)
+    message = Column(Text, nullable=False)
+    created_by = Column(Integer, ForeignKey("users_roles.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class CompanyReport(Base):
+    __tablename__ = "company_reports"
+    id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(Integer, ForeignKey("companies.id"), nullable=False)
+    title = Column(String(255), nullable=False)
+    report_type = Column(String(100), nullable=False)
+    payload = Column(JSON, nullable=False)
+    created_by = Column(Integer, ForeignKey("users_roles.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class UserSetting(Base):
+    __tablename__ = "user_settings"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users_roles.id"), unique=True, nullable=False)
+    settings = Column(JSON, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
 # Partitioning for RawData by sector and time
 partition_by_sector_time = DDL("""
 CREATE TABLE IF NOT EXISTS raw_data_y2023 PARTITION OF raw_data

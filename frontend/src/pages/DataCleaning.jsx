@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  AlertTriangle,
   CheckCircle2,
   Database,
   Download,
@@ -28,6 +29,8 @@ import {
   runDataCleaning,
   streamDataCleaning,
   downloadCleanedDataset,
+  downloadAllCleanedDatasets,
+  deleteCleanedHistory,
 } from "../services/api";
 
 const CLEANING_ALGORITHMS = [
@@ -68,6 +71,8 @@ export default function DataCleaning() {
   const [streamStatus, setStreamStatus] = useState("idle");
   const [cleanedDatasets, setCleanedDatasets] = useState([]);
   const [downloadingId, setDownloadingId] = useState(null);
+  const [downloadingAll, setDownloadingAll] = useState(false);
+  const [deletingHistory, setDeletingHistory] = useState(false);
   const [comparisonData, setComparisonData] = useState(null);
   const [comparisonLoading, setComparisonLoading] = useState(false);
 
@@ -228,6 +233,12 @@ export default function DataCleaning() {
             setStreamStatus("completed");
             setCleaningProgress(100);
             setCleaningLogs((prev) => [...prev, `[${now}] Cleaning completed successfully`]);
+            if (data?.cleaning_summary?.cleaned_percent != null) {
+              setCleaningLogs((prev) => [
+                ...prev,
+                `[${now}] Cleaned percentage: ${data.cleaning_summary.cleaned_percent}%`,
+              ]);
+            }
             setUploadedData((prev) =>
               prev.map((item) =>
                 item.id === selectedDataset.id
@@ -254,6 +265,12 @@ export default function DataCleaning() {
         const fallback = await runDataCleaning(selectedDataset.id, selectedAlgorithm);
         setCleaningProgress(100);
         setCleaningLogs((prev) => [...prev, `[${formatTime(new Date())}] ${fallback.message || "Fallback cleaning completed"}`]);
+        if (fallback?.cleaning_summary?.cleaned_percent != null) {
+          setCleaningLogs((prev) => [
+            ...prev,
+            `[${formatTime(new Date())}] Cleaned percentage: ${fallback.cleaning_summary.cleaned_percent}%`,
+          ]);
+        }
       }
       await loadData();
       try {
@@ -269,6 +286,12 @@ export default function DataCleaning() {
         const fallback = await runDataCleaning(selectedDataset.id, selectedAlgorithm);
         setCleaningProgress(100);
         setCleaningLogs((prev) => [...prev, `[${formatTime(new Date())}] ${fallback.message || "Fallback cleaning completed"}`]);
+        if (fallback?.cleaning_summary?.cleaned_percent != null) {
+          setCleaningLogs((prev) => [
+            ...prev,
+            `[${formatTime(new Date())}] Cleaned percentage: ${fallback.cleaning_summary.cleaned_percent}%`,
+          ]);
+        }
         await loadData();
         try {
           const data = await getCleaningComparison(selectedDataset.id);
@@ -301,6 +324,41 @@ export default function DataCleaning() {
       setCleaningLogs((prev) => [...prev, `[${formatTime(new Date())}] Download failed: ${error.message}`]);
     } finally {
       setDownloadingId(null);
+    }
+  };
+
+  const handleDownloadAll = async (format = "csv") => {
+    setDownloadingAll(true);
+    try {
+      const { blob, filename } = await downloadAllCleanedDatasets(format);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setCleaningLogs((prev) => [...prev, `[${formatTime(new Date())}] Download all failed: ${error.message}`]);
+    } finally {
+      setDownloadingAll(false);
+    }
+  };
+
+  const handleDeleteHistory = async () => {
+    const confirmDelete = window.confirm("Delete all cleaned dataset history in your role workspace?");
+    if (!confirmDelete) return;
+    setDeletingHistory(true);
+    try {
+      const result = await deleteCleanedHistory();
+      setCleaningLogs((prev) => [...prev, `[${formatTime(new Date())}] ${result.message} (${result.deleted_count})`]);
+      setComparisonData(null);
+      await loadData();
+    } catch (error) {
+      setCleaningLogs((prev) => [...prev, `[${formatTime(new Date())}] Delete history failed: ${error.message}`]);
+    } finally {
+      setDeletingHistory(false);
     }
   };
 
@@ -535,7 +593,27 @@ export default function DataCleaning() {
       <section className="clean-card mt-6 rounded-xl border p-4">
         <div className="mb-3 flex items-center justify-between gap-2">
           <h2 className="text-lg font-semibold text-clay-900 dark:text-slate-100">Cleaned Datasets</h2>
-          <span className="text-xs text-clay-600 dark:text-slate-400">{cleanedDatasets.length} files</span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => handleDownloadAll("csv")}
+              disabled={downloadingAll || cleanedDatasets.length === 0}
+              className="inline-flex items-center gap-1 rounded-md bg-teal-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-700 disabled:opacity-60"
+            >
+              <Download className="h-3.5 w-3.5" />
+              Download All
+            </button>
+            <button
+              type="button"
+              onClick={handleDeleteHistory}
+              disabled={deletingHistory || cleanedDatasets.length === 0}
+              className="inline-flex items-center gap-1 rounded-md border border-red-300 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-60 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-900/20"
+            >
+              <AlertTriangle className="h-3.5 w-3.5" />
+              Delete History
+            </button>
+            <span className="text-xs text-clay-600 dark:text-slate-400">{cleanedDatasets.length} files</span>
+          </div>
         </div>
         {cleanedDatasets.length === 0 ? (
           <p className="text-sm text-clay-500 dark:text-slate-400">No cleaned datasets yet.</p>

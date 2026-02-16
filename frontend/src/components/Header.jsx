@@ -1,17 +1,33 @@
 import { Bell, User, ChevronDown, Search } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
+import { getAnnouncements } from "../services/api";
 
 export default function Header() {
   const [showDropdown, setShowDropdown] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const { user, logout } = useAuth();
 
-  const notifications = [
-    { id: 1, message: "Data processing completed", time: "2 min ago", unread: true },
-    { id: 2, message: "New AI insights available", time: "15 min ago", unread: true },
-    { id: 3, message: "System maintenance scheduled", time: "1 hour ago", unread: false },
-  ];
+  const [notifications, setNotifications] = useState([]);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const rows = await getAnnouncements();
+        setNotifications(
+          (Array.isArray(rows) ? rows : []).map((item, index) => ({
+            id: item.id || index + 1,
+            message: `${item.title}: ${item.message}`,
+            time: item.created_at ? new Date(item.created_at).toLocaleString() : "-",
+            unread: index < 5,
+          }))
+        );
+      } catch {
+        setNotifications([]);
+      }
+    };
+    load();
+  }, []);
 
   const currentRole = user?.role || "CEO";
   const username = user?.username || "User";

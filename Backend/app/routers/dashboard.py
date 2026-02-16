@@ -6,12 +6,23 @@ from sqlalchemy import func
 from app.database import SessionLocal
 from app.models import (
     User, Sector, Product, RawData, CleanedData, DataQualityScore,
-    AIPrediction, AIRecommendation, FeedbackLog
+    AIPrediction, AIRecommendation, FeedbackLog, CompanyAnnouncement, UserSetting
 )
 from app.dependencies import get_current_user, require_sector_head, require_ceo, require_admin
 from app.services.feedback_learning import FeedbackLearningEngine
+from pydantic import BaseModel
+from datetime import datetime
 
 router = APIRouter()
+
+
+class AnnouncementCreateRequest(BaseModel):
+    title: str
+    message: str
+
+
+class SettingsUpdateRequest(BaseModel):
+    settings: dict
 
 def get_db():
     db = SessionLocal()
@@ -19,6 +30,23 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def _allowed_sector_ids(db: Session, current_user: User) -> List[int]:
+    query = db.query(Sector.id).filter(Sector.company_id == current_user.company_id)
+    if current_user.role == "sector_head":
+        query = query.filter(Sector.id == current_user.sector_id)
+    return [row[0] for row in query.all()]
+
+
+def _allowed_uploader_ids(db: Session, current_user: User) -> List[int]:
+    return [
+        row[0]
+        for row in db.query(User.id).filter(
+            User.company_id == current_user.company_id,
+            User.role == current_user.role,
+        ).all()
+    ]
 
 @router.get("/")
 async def get_dashboard(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -41,25 +69,43 @@ async def get_sector_head_dashboard(user: User, db: Session) -> Dict[str, Any]:
     if not sector:
         raise HTTPException(status_code=404, detail="Sector not found")
 
+    uploader_ids = _allowed_uploader_ids(db, user)
+    if not uploader_ids:
+        uploader_ids = [-1]
+
     # Recent uploads
-    recent_uploads = db.query(RawData).filter(RawData.sector_id == user.sector_id)\
+    recent_uploads = db.query(RawData).filter(
+        RawData.sector_id == user.sector_id,
+        RawData.uploaded_by.in_(uploader_ids),
+    )\
         .order_by(RawData.uploaded_at.desc()).limit(5).all()
 
     # Cleaned data summary
     cleaned_count = db.query(func.count(CleanedData.id))\
         .join(RawData, CleanedData.raw_data_id == RawData.id)\
-        .filter(RawData.sector_id == user.sector_id).scalar()
+        .filter(
+            RawData.sector_id == user.sector_id,
+            RawData.uploaded_by.in_(uploader_ids),
+        ).scalar()
 
     # AI predictions for sector
     predictions = db.query(AIPrediction)\
-        .filter(AIPrediction.sector_id == user.sector_id)\
+        .join(RawData, RawData.sector_id == AIPrediction.sector_id)\
+        .filter(
+            AIPrediction.sector_id == user.sector_id,
+            RawData.uploaded_by.in_(uploader_ids),
+        )\
+        .distinct()\
         .order_by(AIPrediction.predicted_at.desc()).limit(3).all()
 
     # Data quality scores
     avg_quality = db.query(func.avg(DataQualityScore.score))\
         .join(CleanedData, DataQualityScore.cleaned_data_id == CleanedData.id)\
         .join(RawData, CleanedData.raw_data_id == RawData.id)\
-        .filter(RawData.sector_id == user.sector_id).scalar() or 0
+        .filter(
+            RawData.sector_id == user.sector_id,
+            RawData.uploaded_by.in_(uploader_ids),
+        ).scalar() or 0
 
     return {
         "role": "sector_head",
@@ -92,14 +138,25 @@ async def get_sector_head_dashboard(user: User, db: Session) -> Dict[str, Any]:
 async def get_ceo_dashboard(user: User, db: Session) -> Dict[str, Any]:
     """CEO Dashboard: Company-wide aggregated view"""
 
-    # Company overview
-    company_sector_ids = [row[0] for row in db.query(Sector.id).filter(Sector.company_id == user.company_id).all()]
-    if not company_sector_ids:
+    allowed_sector_ids = _allowed_sector_ids(db, user)
+    uploader_ids = _allowed_uploader_ids(db, user)
+    if not allowed_sector_ids or not uploader_ids:
         company_sector_ids = [-1]
+    else:
+        company_sector_ids = [
+            row[0]
+            for row in db.query(RawData.sector_id).filter(
+                RawData.sector_id.in_(allowed_sector_ids),
+                RawData.uploaded_by.in_(uploader_ids),
+            ).distinct().all()
+        ] or [-1]
 
-    total_sectors = db.query(func.count(Sector.id)).filter(Sector.company_id == user.company_id).scalar()
-    total_products = db.query(func.count(Product.id)).join(Sector, Product.sector_id == Sector.id).filter(Sector.company_id == user.company_id).scalar()
-    total_uploads = db.query(func.count(RawData.id)).filter(RawData.sector_id.in_(company_sector_ids)).scalar()
+    total_sectors = db.query(func.count(Sector.id)).filter(Sector.id.in_(company_sector_ids)).scalar()
+    total_products = db.query(func.count(Product.id)).filter(Product.sector_id.in_(company_sector_ids)).scalar()
+    total_uploads = db.query(func.count(RawData.id)).filter(
+        RawData.sector_id.in_(company_sector_ids),
+        RawData.uploaded_by.in_(uploader_ids if uploader_ids else [-1]),
+    ).scalar()
 
     # Sector performance comparison
     sector_stats = db.query(
@@ -109,13 +166,21 @@ async def get_ceo_dashboard(user: User, db: Session) -> Dict[str, Any]:
     ).join(RawData, Sector.id == RawData.sector_id)\
      .outerjoin(CleanedData, RawData.id == CleanedData.raw_data_id)\
      .outerjoin(DataQualityScore, CleanedData.id == DataQualityScore.cleaned_data_id)\
-     .filter(Sector.company_id == user.company_id)\
+     .filter(
+         Sector.id.in_(company_sector_ids),
+         RawData.uploaded_by.in_(uploader_ids if uploader_ids else [-1]),
+     )\
      .group_by(Sector.id, Sector.name).all()
 
     # AI recommendations
     recommendations = db.query(AIRecommendation)\
         .join(AIPrediction, AIRecommendation.prediction_id == AIPrediction.id)\
-        .filter(AIPrediction.sector_id.in_(company_sector_ids))\
+        .join(RawData, RawData.sector_id == AIPrediction.sector_id)\
+        .filter(
+            AIPrediction.sector_id.in_(company_sector_ids),
+            RawData.uploaded_by.in_(uploader_ids if uploader_ids else [-1]),
+        )\
+        .distinct()\
         .order_by(AIRecommendation.created_at.desc()).limit(5).all()
 
     # Company-wide predictions summary
@@ -123,7 +188,12 @@ async def get_ceo_dashboard(user: User, db: Session) -> Dict[str, Any]:
         AIPrediction.prediction_type,
         func.avg(AIPrediction.confidence).label('avg_confidence'),
         func.count(AIPrediction.id).label('count')
-    ).filter(AIPrediction.sector_id.in_(company_sector_ids)).group_by(AIPrediction.prediction_type).all()
+    ).join(RawData, RawData.sector_id == AIPrediction.sector_id)\
+     .filter(
+         AIPrediction.sector_id.in_(company_sector_ids),
+         RawData.uploaded_by.in_(uploader_ids if uploader_ids else [-1]),
+     )\
+     .group_by(AIPrediction.prediction_type).all()
 
     return {
         "role": "ceo",
@@ -160,6 +230,10 @@ async def get_ceo_dashboard(user: User, db: Session) -> Dict[str, Any]:
 async def get_admin_dashboard(user: User, db: Session) -> Dict[str, Any]:
     """Admin Dashboard: System monitoring and user management"""
 
+    uploader_ids = _allowed_uploader_ids(db, user)
+    if not uploader_ids:
+        uploader_ids = [-1]
+
     # User statistics
     total_users = db.query(func.count(User.id)).filter(User.company_id == user.company_id).scalar()
     users_by_role = db.query(User.role, func.count(User.id))\
@@ -170,17 +244,31 @@ async def get_admin_dashboard(user: User, db: Session) -> Dict[str, Any]:
     company_sector_ids = [row[0] for row in db.query(Sector.id).filter(Sector.company_id == user.company_id).all()]
     if not company_sector_ids:
         company_sector_ids = [-1]
-    total_raw_data = db.query(func.count(RawData.id)).filter(RawData.sector_id.in_(company_sector_ids)).scalar()
+    total_raw_data = db.query(func.count(RawData.id)).filter(
+        RawData.sector_id.in_(company_sector_ids),
+        RawData.uploaded_by.in_(uploader_ids),
+    ).scalar()
     total_cleaned_data = db.query(func.count(CleanedData.id))\
         .join(RawData, CleanedData.raw_data_id == RawData.id)\
-        .filter(RawData.sector_id.in_(company_sector_ids)).scalar()
+        .filter(
+            RawData.sector_id.in_(company_sector_ids),
+            RawData.uploaded_by.in_(uploader_ids),
+        ).scalar()
     avg_system_quality = db.query(func.avg(DataQualityScore.score))\
         .join(CleanedData, DataQualityScore.cleaned_data_id == CleanedData.id)\
         .join(RawData, CleanedData.raw_data_id == RawData.id)\
-        .filter(RawData.sector_id.in_(company_sector_ids)).scalar() or 0
+        .filter(
+            RawData.sector_id.in_(company_sector_ids),
+            RawData.uploaded_by.in_(uploader_ids),
+        ).scalar() or 0
 
     # Recent feedback
     recent_feedback = db.query(FeedbackLog)\
+        .join(User, User.id == FeedbackLog.user_id)\
+        .filter(
+            User.company_id == user.company_id,
+            User.role == user.role,
+        )\
         .order_by(FeedbackLog.timestamp.desc()).limit(10).all()
 
     # Data processing stats
@@ -214,16 +302,33 @@ async def get_admin_quick_stats(current_user: User = Depends(require_admin), db:
     # New users (users created in last 30 days)
     from datetime import datetime, timedelta
     thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+    uploader_ids = _allowed_uploader_ids(db, current_user)
+    if not uploader_ids:
+        uploader_ids = [-1]
     new_users = db.query(func.count(User.id))\
-        .filter(User.created_at >= thirty_days_ago).scalar()
+        .filter(
+            User.created_at >= thirty_days_ago,
+            User.company_id == current_user.company_id,
+            User.role == current_user.role,
+        ).scalar()
 
     # Pending reports (assuming reports that are not processed or something - using recent reports)
     pending_reports = db.query(func.count(FeedbackLog.id))\
-        .filter(FeedbackLog.feedback_type == 'correction').scalar()
+        .join(User, User.id == FeedbackLog.user_id)\
+        .filter(
+            FeedbackLog.feedback_type == 'correction',
+            User.company_id == current_user.company_id,
+            User.id.in_(uploader_ids),
+        ).scalar()
 
     # System alerts (recent feedback logs)
     system_alerts = db.query(func.count(FeedbackLog.id))\
-        .filter(FeedbackLog.timestamp >= thirty_days_ago).scalar()
+        .join(User, User.id == FeedbackLog.user_id)\
+        .filter(
+            FeedbackLog.timestamp >= thirty_days_ago,
+            User.company_id == current_user.company_id,
+            User.id.in_(uploader_ids),
+        ).scalar()
 
     return {
         "pendingReports": pending_reports,
@@ -251,3 +356,111 @@ async def submit_feedback(
     db.commit()
 
     return {"message": "Feedback submitted successfully"}
+
+
+@router.get("/announcements")
+async def get_announcements(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    rows = db.query(CompanyAnnouncement).filter(
+        CompanyAnnouncement.company_id == current_user.company_id
+    ).order_by(CompanyAnnouncement.created_at.desc()).limit(50).all()
+    return [
+        {
+            "id": row.id,
+            "title": row.title,
+            "message": row.message,
+            "created_by": row.created_by,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+        for row in rows
+    ]
+
+
+@router.post("/announcements")
+async def create_announcement(
+    payload: AnnouncementCreateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user.role not in ["ceo", "admin"]:
+        raise HTTPException(status_code=403, detail="Only CEO/Admin can post announcements")
+    row = CompanyAnnouncement(
+        company_id=current_user.company_id,
+        title=payload.title,
+        message=payload.message,
+        created_by=current_user.id,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {
+        "id": row.id,
+        "title": row.title,
+        "message": row.message,
+        "created_by": row.created_by,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+    }
+
+
+@router.get("/settings")
+async def get_user_settings(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    row = db.query(UserSetting).filter(UserSetting.user_id == current_user.id).first()
+    if not row:
+        default_settings = {
+            "notifications": {
+                "email_reports": True,
+                "in_app_alerts": True,
+            },
+            "ai": {
+                "feedback_learning": True,
+                "prediction_confidence_threshold": 75,
+            },
+            "data": {
+                "auto_cleaning_threshold": 85,
+                "duplicate_detection": True,
+            },
+        }
+        row = UserSetting(
+            user_id=current_user.id,
+            settings=default_settings,
+            updated_at=datetime.utcnow(),
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+    return {
+        "user_id": current_user.id,
+        "settings": row.settings,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@router.put("/settings")
+async def update_user_settings(
+    payload: SettingsUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    row = db.query(UserSetting).filter(UserSetting.user_id == current_user.id).first()
+    if not row:
+        row = UserSetting(
+            user_id=current_user.id,
+            settings=payload.settings,
+            updated_at=datetime.utcnow(),
+        )
+        db.add(row)
+    else:
+        row.settings = payload.settings
+        row.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(row)
+    return {
+        "user_id": current_user.id,
+        "settings": row.settings,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }

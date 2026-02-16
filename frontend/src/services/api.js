@@ -256,7 +256,7 @@ export async function getAIInsights() {
 }
 
 export async function uploadData(formData) {
-  const res = await fetch(`${BASE_URL}/api/upload/upload`, {
+  const res = await requestWithBaseFallback(`/api/upload/upload`, {
     method: "POST",
     headers: {
       ...getAuthHeaders(),
@@ -270,8 +270,54 @@ export async function uploadData(formData) {
   return data;
 }
 
+export async function getAnnouncements() {
+  const res = await requestWithBaseFallback(`/api/dashboard/announcements`, {
+    headers: { ...getAuthHeaders() },
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "Failed to load announcements");
+  return data;
+}
+
+export async function createAnnouncement(payload) {
+  const res = await requestWithBaseFallback(`/api/dashboard/announcements`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "Failed to create announcement");
+  return data;
+}
+
+export async function getUserSettings() {
+  const res = await requestWithBaseFallback(`/api/dashboard/settings`, {
+    headers: { ...getAuthHeaders() },
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "Failed to load settings");
+  return data;
+}
+
+export async function updateUserSettings(settings) {
+  const res = await requestWithBaseFallback(`/api/dashboard/settings`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify({ settings }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "Failed to save settings");
+  return data;
+}
+
 export async function getSectors() {
-  const res = await fetch(`${BASE_URL}/api/upload/sectors`, {
+  const res = await requestWithBaseFallback(`/api/upload/sectors`, {
     headers: {
       ...getAuthHeaders(),
     },
@@ -284,7 +330,7 @@ export async function getSectors() {
 }
 
 export async function getProducts(sectorId) {
-  const res = await fetch(`${BASE_URL}/api/upload/products/${sectorId}`, {
+  const res = await requestWithBaseFallback(`/api/upload/products/${sectorId}`, {
     headers: {
       ...getAuthHeaders(),
     },
@@ -297,12 +343,36 @@ export async function getProducts(sectorId) {
 }
 
 export async function getReports() {
-  const res = await fetch(`${BASE_URL}/api/reports/`, {
+  const res = await requestWithBaseFallback(`/api/reports/`, {
+    headers: { ...getAuthHeaders() },
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "Failed to load reports");
+  return data;
+}
+
+export async function generateReport(payload) {
+  const res = await requestWithBaseFallback(`/api/reports/generate`, {
+    method: "POST",
     headers: {
+      "Content-Type": "application/json",
       ...getAuthHeaders(),
     },
+    body: JSON.stringify(payload),
   });
-  return res.json();
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "Failed to generate report");
+  return data;
+}
+
+export async function deleteReport(reportId) {
+  const res = await requestWithBaseFallback(`/api/reports/${reportId}`, {
+    method: "DELETE",
+    headers: { ...getAuthHeaders() },
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "Failed to delete report");
+  return data;
 }
 
 export async function getDataCleaningStats() {
@@ -351,6 +421,46 @@ export async function downloadCleanedDataset(cleanedDataId, format = "csv") {
     blob,
     filename: match?.[1] || `cleaned_${cleanedDataId}.${format}`,
   };
+}
+
+export async function downloadAllCleanedDatasets(format = "csv") {
+  const res = await requestWithBaseFallback(`/api/analysis/cleaned-datasets/download-all?format=${encodeURIComponent(format)}`, {
+    headers: {
+      ...getAuthHeaders(),
+    },
+  });
+  if (!res.ok) {
+    let message = "Download failed";
+    try {
+      const data = await res.json();
+      message = data?.detail || data?.message || message;
+    } catch {
+      const text = await res.text();
+      if (text) message = text;
+    }
+    throw new Error(message);
+  }
+  const blob = await res.blob();
+  const disposition = res.headers.get("content-disposition") || "";
+  const match = disposition.match(/filename=\"?([^\";]+)\"?/i);
+  return {
+    blob,
+    filename: match?.[1] || `cleaned_datasets_${format}.zip`,
+  };
+}
+
+export async function deleteCleanedHistory() {
+  const res = await requestWithBaseFallback(`/api/analysis/cleaned-datasets/history`, {
+    method: "DELETE",
+    headers: {
+      ...getAuthHeaders(),
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.detail || data?.message || "Failed to delete cleaned history");
+  }
+  return data;
 }
 
 export async function getUploadedData() {

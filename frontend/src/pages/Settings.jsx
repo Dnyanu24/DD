@@ -1,5 +1,6 @@
 import { useState } from "react";
 import KPICard from "../components/KPICard";
+import { Bot, Bell, Database, Lock, Settings as SettingsIcon } from "lucide-react";
 
 export default function Settings() {
   const [activeTab, setActiveTab] = useState("general");
@@ -12,11 +13,11 @@ export default function Settings() {
   ];
 
   const tabs = [
-    { id: "general", name: "General", icon: "⚙️" },
-    { id: "security", name: "Security", icon: "🔒" },
-    { id: "data", name: "Data Management", icon: "💾" },
-    { id: "ai", name: "AI Configuration", icon: "🤖" },
-    { id: "notifications", name: "Notifications", icon: "🔔" },
+    { id: "general", name: "General", icon: SettingsIcon },
+    { id: "security", name: "Security", icon: Lock },
+    { id: "data", name: "Data Management", icon: Database },
+    { id: "ai", name: "AI Configuration", icon: Bot },
+    { id: "notifications", name: "Notifications", icon: Bell },
   ];
 
   const renderTabContent = () => {
@@ -406,7 +407,6 @@ export default function Settings() {
       <h1 className="text-3xl font-bold mb-4">Settings</h1>
       <p className="text-gray-400 mb-6">Configure system preferences and settings</p>
 
-      {/* System Metrics */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
         {systemMetrics.map((metric, index) => (
           <KPICard
@@ -420,7 +420,6 @@ export default function Settings() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        {/* Settings Tabs */}
         <div className="bg-gray-800 p-6 rounded-lg shadow-lg border border-gray-700">
           <h3 className="text-lg font-semibold text-white mb-4">Configuration</h3>
           <div className="space-y-2">
@@ -434,7 +433,7 @@ export default function Settings() {
                     : "bg-gray-700 text-gray-300 hover:bg-gray-600"
                 }`}
               >
-                <span className="text-lg">{tab.icon}</span>
+                <tab.icon className="h-5 w-5" />
                 <span className="font-medium">{tab.name}</span>
               </button>
             ))}
@@ -456,7 +455,6 @@ export default function Settings() {
           </div>
         </div>
 
-        {/* Settings Content */}
         <div className="lg:col-span-3">
           {renderTabContent()}
         </div>

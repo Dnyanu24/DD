@@ -1,11 +1,11 @@
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Form, BackgroundTasks
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Form
 from sqlalchemy.orm import Session
 from typing import Optional
 import pandas as pd
 import numpy as np
 import json
+import math
 from datetime import datetime
-import asyncio
 
 from app.database import SessionLocal
 from app.models import RawData, CleanedData, DataQualityScore, Sector, Product, User
@@ -25,21 +25,49 @@ def _to_json_safe_records(df: pd.DataFrame):
     for col in safe_df.columns:
         if pd.api.types.is_datetime64_any_dtype(safe_df[col]):
             safe_df[col] = safe_df[col].dt.strftime("%Y-%m-%dT%H:%M:%S")
-    safe_df = safe_df.where(pd.notnull(safe_df), None)
 
     records = safe_df.to_dict("records")
     normalized = []
     for row in records:
         normalized_row = {}
         for key, value in row.items():
-            if isinstance(value, pd.Timestamp):
+            if pd.isna(value):
+                normalized_row[key] = None
+            elif isinstance(value, pd.Timestamp):
                 normalized_row[key] = value.isoformat()
+            elif isinstance(value, float) and not math.isfinite(value):
+                normalized_row[key] = None
             elif isinstance(value, np.generic):
-                normalized_row[key] = value.item()
+                casted = value.item()
+                if isinstance(casted, float) and not math.isfinite(casted):
+                    normalized_row[key] = None
+                else:
+                    normalized_row[key] = casted
             else:
                 normalized_row[key] = value
         normalized.append(normalized_row)
     return normalized
+
+
+def _sanitize_json_payload(value):
+    """Recursively convert values to JSON-safe primitives (no NaN/Inf)."""
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return {str(k): _sanitize_json_payload(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_sanitize_json_payload(v) for v in value]
+    if isinstance(value, pd.Timestamp):
+        return value.isoformat()
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, np.generic):
+        return _sanitize_json_payload(value.item())
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, np.ndarray):
+        return [_sanitize_json_payload(v) for v in value.tolist()]
+    return value
 
 def _adaptive_upload_config(db: Session, df: pd.DataFrame) -> dict:
     from app.services.feedback_learning import FeedbackLearningEngine
@@ -77,6 +105,13 @@ def _user_sector_ids_query(db: Session, current_user: User):
         query = query.filter(Sector.id == current_user.sector_id)
     return query
 
+
+def _role_scoped_user_ids_query(db: Session, current_user: User):
+    return db.query(User.id).filter(
+        User.company_id == current_user.company_id,
+        User.role == current_user.role
+    )
+
 @router.post("/upload")
 async def upload_data(
     file: UploadFile = File(...),
@@ -109,10 +144,11 @@ async def upload_data(
 
     # Metadata tagging
     # Store raw data
+    safe_records = _to_json_safe_records(df)
     raw_data_entry = RawData(
         sector_id=sector_id,
         product_id=product_id,
-        data=df.to_dict('records'),  # Store as JSON
+        data=safe_records,  # Store JSON-safe records (no NaN/Inf)
         uploaded_by=current_user.id
     )
     db.add(raw_data_entry)
@@ -122,15 +158,16 @@ async def upload_data(
     # Upload keeps dataset in pending state; cleaning happens from Data Cleaning page.
     optimal_config = _adaptive_upload_config(db, df)
 
-    return {
+    payload = {
         "message": "Data uploaded successfully. Run cleaning from Data Cleaning page.",
         "raw_data_id": raw_data_entry.id,
         "cleaned_data_id": None,
-        "preview": _to_json_safe_records(df.head(5)),
+        "preview": safe_records[:5],
         "quality_scores": {},
         "logs": [],
         "adaptive_config": optimal_config
     }
+    return _sanitize_json_payload(payload)
 
 @router.get("/sectors")
 async def get_sectors(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -174,9 +211,15 @@ async def get_uploaded_data(
     
     try:
         allowed_sector_ids = [row[0] for row in _user_sector_ids_query(db, current_user).all()]
+        allowed_user_ids = [row[0] for row in _role_scoped_user_ids_query(db, current_user).all()]
         if not allowed_sector_ids:
             return {"data": [], "total_count": 0}
-        raw_data = db.query(RawData).filter(RawData.sector_id.in_(allowed_sector_ids)).all()
+        if not allowed_user_ids:
+            return {"data": [], "total_count": 0}
+        raw_data = db.query(RawData).filter(
+            RawData.sector_id.in_(allowed_sector_ids),
+            RawData.uploaded_by.in_(allowed_user_ids)
+        ).all()
         
         result = []
         for data in raw_data:
@@ -250,6 +293,9 @@ async def delete_uploaded_dataset(
     if not sector or sector.company_id != current_user.company_id:
         raise HTTPException(status_code=403, detail="Access denied")
     if current_user.role == "sector_head" and raw_data.sector_id != current_user.sector_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+    allowed_user_ids = [row[0] for row in _role_scoped_user_ids_query(db, current_user).all()]
+    if raw_data.uploaded_by not in allowed_user_ids:
         raise HTTPException(status_code=403, detail="Access denied")
 
     cleaned_rows = db.query(CleanedData).filter(CleanedData.raw_data_id == raw_data.id).all()

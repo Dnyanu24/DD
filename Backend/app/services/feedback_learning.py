@@ -2,6 +2,8 @@ import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, mean_squared_error
+from sklearn.linear_model import SGDRegressor
+from sklearn.neural_network import MLPRegressor
 from typing import Dict, Any, List, Optional
 import logging
 from datetime import datetime, timedelta
@@ -20,6 +22,17 @@ class FeedbackLearningEngine:
             'normalization': {'min_max': 0.7, 'z_score': 0.3}
         }
         self.prediction_adjustments = {}
+        # Online learning model (incremental updates from newest quality feedback).
+        self.online_quality_model = SGDRegressor(random_state=42, max_iter=1000, tol=1e-3)
+        # Backpropagation model (MLP) for non-linear quality trend mapping.
+        self.backprop_quality_model = MLPRegressor(
+            hidden_layer_sizes=(8, 4),
+            activation="relu",
+            random_state=42,
+            max_iter=500,
+        )
+        self.online_initialized = False
+        self.backprop_initialized = False
 
     def process_feedback(self, db: Session) -> Dict[str, Any]:
         """Process all feedback logs and update learning parameters"""
@@ -170,6 +183,123 @@ class FeedbackLearningEngine:
         }
 
         return config
+
+    def update_models_from_feedback(self, db: Session) -> Dict[str, Any]:
+        """
+        Train feedback-learning models with historical quality scores.
+        - Online learning: SGDRegressor with partial_fit.
+        - Backprop learning: MLPRegressor fit on rolling quality features.
+        """
+        rows = db.query(DataQualityScore).order_by(DataQualityScore.timestamp.asc()).limit(500).all()
+        if len(rows) < 8:
+            return {"trained": False, "reason": "insufficient_history"}
+
+        scores = np.array([float(r.score) for r in rows], dtype=float)
+        x_data = []
+        y_data = []
+        for i in range(3, len(scores)):
+            window = scores[max(0, i - 5):i]
+            x_data.append([
+                i / max(len(scores), 1),
+                float(np.mean(window)),
+                float(np.std(window)),
+            ])
+            y_data.append(scores[i])
+
+        X = np.array(x_data, dtype=float)
+        y = np.array(y_data, dtype=float)
+        if len(X) < 5:
+            return {"trained": False, "reason": "insufficient_features"}
+
+        # Online model update
+        if not self.online_initialized:
+            self.online_quality_model.partial_fit(X, y)
+            self.online_initialized = True
+        else:
+            self.online_quality_model.partial_fit(X[-20:], y[-20:])
+
+        # Backprop model refresh
+        self.backprop_quality_model.fit(X, y)
+        self.backprop_initialized = True
+
+        return {"trained": True, "samples": len(X)}
+
+    def recommend_with_active_online_learning(
+        self,
+        data_characteristics: Dict[str, Any],
+        historical_avg_quality: float,
+        high_quality_rate: float,
+    ) -> Dict[str, Any]:
+        """
+        Active + online recommendation:
+        - Build candidate cleaning configs.
+        - Predict quality with online/backprop models.
+        - Select candidate using uncertainty sampling near decision boundary.
+        """
+        base_candidates = [
+            {"impute_strategy": "mean", "outlier_method": "iqr", "normalize": True, "standardize": False},
+            {"impute_strategy": "median", "outlier_method": "iqr", "normalize": True, "standardize": False},
+            {"impute_strategy": "ml", "outlier_method": "zscore", "normalize": False, "standardize": True},
+        ]
+
+        if not (self.online_initialized or self.backprop_initialized):
+            # Fallback to weight-driven strategy when no trained model is available.
+            return {
+                "config": self.get_optimal_cleaning_config(data_characteristics),
+                "model": "heuristic_fallback",
+                "predicted_quality": historical_avg_quality,
+            }
+
+        candidates = []
+        for candidate in base_candidates:
+            feature = np.array([[
+                float(abs(data_characteristics.get("skewness", 0.0))),
+                float(historical_avg_quality),
+                float(high_quality_rate),
+            ]], dtype=float)
+            pred_online = None
+            pred_backprop = None
+            if self.online_initialized:
+                pred_online = float(self.online_quality_model.predict(feature)[0])
+            if self.backprop_initialized:
+                pred_backprop = float(self.backprop_quality_model.predict(feature)[0])
+
+            if pred_online is not None and pred_backprop is not None:
+                pred_quality = (pred_online + pred_backprop) / 2.0
+                uncertainty = abs(pred_online - pred_backprop)
+                model = "online+backprop"
+            elif pred_online is not None:
+                pred_quality = pred_online
+                uncertainty = abs(pred_online - historical_avg_quality)
+                model = "online"
+            else:
+                pred_quality = pred_backprop
+                uncertainty = abs(pred_backprop - historical_avg_quality)
+                model = "backprop"
+
+            candidates.append({
+                "candidate": candidate,
+                "predicted_quality": float(np.clip(pred_quality, 0.0, 1.0)),
+                "uncertainty": float(uncertainty),
+                "model": model,
+            })
+
+        # Active learning: prefer highest predicted quality, break ties by highest uncertainty
+        # to explore uncertain areas and improve next online updates.
+        candidates.sort(key=lambda c: (c["predicted_quality"], c["uncertainty"]), reverse=True)
+        winner = candidates[0]
+
+        config = {
+            **self.get_optimal_cleaning_config(data_characteristics),
+            **winner["candidate"],
+        }
+
+        return {
+            "config": config,
+            "model": winner["model"],
+            "predicted_quality": round(winner["predicted_quality"], 4),
+            "uncertainty": round(winner["uncertainty"], 4),
+        }
 
     def _choose_best_imputation(self, data_characteristics: Dict[str, Any]) -> str:
         """Choose best imputation strategy based on learning"""

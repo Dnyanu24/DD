@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="SDAS Logo">
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#1f2937"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#14b8a6"/>
+      <stop offset="100%" stop-color="#22d3ee"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="224" height="224" rx="56" fill="url(#bg)"/>
+  <circle cx="128" cy="128" r="72" fill="none" stroke="url(#accent)" stroke-width="14"/>
+  <path d="M86 146l22-24 18 18 42-44" fill="none" stroke="url(#accent)" stroke-linecap="round" stroke-linejoin="round" stroke-width="14"/>
+  <circle cx="86" cy="146" r="7" fill="#22d3ee"/>
+  <circle cx="108" cy="122" r="7" fill="#2dd4bf"/>
+  <circle cx="126" cy="140" r="7" fill="#14b8a6"/>
+  <circle cx="168" cy="96" r="7" fill="#22d3ee"/>
+</svg>

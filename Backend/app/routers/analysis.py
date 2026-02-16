@@ -6,6 +6,8 @@ import pandas as pd
 import numpy as np
 import json
 import asyncio
+import io
+import zipfile
 from datetime import datetime
 import re
 
@@ -161,6 +163,39 @@ def _split_by_sector(df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
     return grouped
 
 
+def _compute_cleaning_improvement(before_df: pd.DataFrame, after_df: pd.DataFrame) -> Dict[str, Any]:
+    def missing_pct(df: pd.DataFrame) -> float:
+        total_cells = max(len(df) * max(len(df.columns), 1), 1)
+        if len(df.columns) == 0:
+            return 0.0
+        return float(df.isna().sum().sum()) / total_cells
+
+    def duplicate_count(df: pd.DataFrame) -> int:
+        return int(df.duplicated().sum()) if len(df.columns) > 0 else 0
+
+    before_missing = missing_pct(before_df)
+    after_missing = missing_pct(after_df)
+    before_dup = duplicate_count(before_df)
+    after_dup = duplicate_count(after_df)
+
+    missing_reduction = max(0.0, before_missing - after_missing)
+    dup_reduction_ratio = (
+        (before_dup - after_dup) / max(before_dup, 1)
+        if before_dup > 0 else 0.0
+    )
+    row_retention = len(after_df) / max(len(before_df), 1)
+    improvement = (missing_reduction * 0.5 + max(0.0, dup_reduction_ratio) * 0.3 + min(row_retention, 1.0) * 0.2) * 100
+    improvement = max(0.0, min(100.0, improvement))
+
+    return {
+        "cleaned_percent": round(improvement, 2),
+        "missing_before_percent": round(before_missing * 100, 2),
+        "missing_after_percent": round(after_missing * 100, 2),
+        "duplicates_before": before_dup,
+        "duplicates_after": after_dup,
+    }
+
+
 def _allowed_sector_ids(db: Session, current_user: User) -> List[int]:
     query = db.query(Sector.id).filter(Sector.company_id == current_user.company_id)
     if current_user.role == "sector_head":
@@ -168,13 +203,26 @@ def _allowed_sector_ids(db: Session, current_user: User) -> List[int]:
     return [row[0] for row in query.all()]
 
 
+def _allowed_uploader_ids(db: Session, current_user: User) -> List[int]:
+    return [
+        row[0] for row in db.query(User.id).filter(
+            User.company_id == current_user.company_id,
+            User.role == current_user.role
+        ).all()
+    ]
+
+
 def _get_accessible_raw_data(db: Session, data_id: int, current_user: User) -> Optional[RawData]:
     sector_ids = _allowed_sector_ids(db, current_user)
+    uploader_ids = _allowed_uploader_ids(db, current_user)
     if not sector_ids:
+        return None
+    if not uploader_ids:
         return None
     return db.query(RawData).filter(
         RawData.id == data_id,
-        RawData.sector_id.in_(sector_ids)
+        RawData.sector_id.in_(sector_ids),
+        RawData.uploaded_by.in_(uploader_ids),
     ).first()
 
 
@@ -229,6 +277,14 @@ def _derive_learning_strategy(db: Session, df: pd.DataFrame) -> Dict[str, Any]:
         config["outlier_method"] = "zscore"
         config["clean_text"] = True
 
+    model_training = learning_engine.update_models_from_feedback(db)
+    active_online = learning_engine.recommend_with_active_online_learning(
+        data_characteristics=data_characteristics,
+        historical_avg_quality=avg_quality,
+        high_quality_rate=high_quality_rate,
+    )
+    config = active_online.get("config", config)
+
     return {
         "config": config,
         "history": {
@@ -236,6 +292,10 @@ def _derive_learning_strategy(db: Session, df: pd.DataFrame) -> Dict[str, Any]:
             "high_quality_rate": round(high_quality_rate, 4),
             "quality_trend_slope": round(quality_trend, 6),
             "history_size": len(quality_rows),
+            "feedback_model_training": model_training,
+            "feedback_model_used": active_online.get("model", "heuristic_fallback"),
+            "feedback_predicted_quality": active_online.get("predicted_quality", round(avg_quality, 4)),
+            "feedback_uncertainty": active_online.get("uncertainty", 0.0),
         },
     }
 
@@ -661,6 +721,7 @@ async def clean_data(
         for step in steps:
             df_clean = step["operation"](df_clean)
         structured_df = _structure_dataframe(df_clean)
+        improvement = _compute_cleaning_improvement(source_df, structured_df)
 
         persist_result = _persist_cleaned_variants(
             db=db,
@@ -678,6 +739,7 @@ async def clean_data(
             "column_count": len(structured_df.columns),
             "adaptive_config": strategy_config,
             "learning_feedback": learning["history"],
+            "cleaning_summary": improvement,
             "quality_scores": cleaning_engine.get_quality_scores(),
             "logs": cleaning_engine.get_logs(),
             **persist_result,
@@ -760,6 +822,8 @@ async def clean_data_stream(
             })
             structured_df = _structure_dataframe(df_clean)
 
+            improvement = _compute_cleaning_improvement(source_df, structured_df)
+
             persist_result = _persist_cleaned_variants(
                 db=db,
                 data_id=data_id,
@@ -787,6 +851,7 @@ async def clean_data_stream(
                 "logs": cleaning_engine.get_logs(),
                 "adaptive_config": strategy_config,
                 "learning_feedback": learning["history"],
+                "cleaning_summary": improvement,
                 "timestamp": _utc_iso(),
                 **persist_result,
             })
@@ -815,12 +880,18 @@ async def get_cleaned_datasets(
 ):
     """List cleaned datasets available to the current user."""
     sector_ids = _allowed_sector_ids(db, current_user)
+    uploader_ids = _allowed_uploader_ids(db, current_user)
     if not sector_ids:
+        return {"data": [], "total_count": 0}
+    if not uploader_ids:
         return {"data": [], "total_count": 0}
 
     rows = db.query(CleanedData, RawData)\
         .join(RawData, CleanedData.raw_data_id == RawData.id)\
-        .filter(RawData.sector_id.in_(sector_ids))\
+        .filter(
+            RawData.sector_id.in_(sector_ids),
+            RawData.uploaded_by.in_(uploader_ids),
+        )\
         .order_by(CleanedData.cleaned_at.desc())\
         .all()
 
@@ -858,14 +929,18 @@ async def download_cleaned_dataset(
 ):
     """Download a cleaned dataset as CSV or JSON."""
     sector_ids = _allowed_sector_ids(db, current_user)
+    uploader_ids = _allowed_uploader_ids(db, current_user)
     if not sector_ids:
+        raise HTTPException(status_code=404, detail="Cleaned dataset not found")
+    if not uploader_ids:
         raise HTTPException(status_code=404, detail="Cleaned dataset not found")
 
     row = db.query(CleanedData, RawData)\
         .join(RawData, CleanedData.raw_data_id == RawData.id)\
         .filter(
             CleanedData.id == cleaned_data_id,
-            RawData.sector_id.in_(sector_ids)
+            RawData.sector_id.in_(sector_ids),
+            RawData.uploaded_by.in_(uploader_ids),
         ).first()
     if not row:
         raise HTTPException(status_code=404, detail="Cleaned dataset not found")
@@ -889,6 +964,90 @@ async def download_cleaned_dataset(
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{base_name}.csv"'},
     )
+
+
+@router.get("/cleaned-datasets/download-all")
+async def download_all_cleaned_datasets(
+    format: str = "csv",
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Download all accessible cleaned datasets as a ZIP archive."""
+    sector_ids = _allowed_sector_ids(db, current_user)
+    uploader_ids = _allowed_uploader_ids(db, current_user)
+    if not sector_ids or not uploader_ids:
+        raise HTTPException(status_code=404, detail="No cleaned datasets found")
+
+    rows = db.query(CleanedData, RawData)\
+        .join(RawData, CleanedData.raw_data_id == RawData.id)\
+        .filter(
+            RawData.sector_id.in_(sector_ids),
+            RawData.uploaded_by.in_(uploader_ids),
+        )\
+        .order_by(CleanedData.cleaned_at.desc())\
+        .all()
+
+    if not rows:
+        raise HTTPException(status_code=404, detail="No cleaned datasets found")
+
+    selected_format = (format or "csv").lower()
+    if selected_format not in {"csv", "json"}:
+        raise HTTPException(status_code=400, detail="Unsupported format")
+
+    mem_zip = io.BytesIO()
+    with zipfile.ZipFile(mem_zip, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for cleaned, raw in rows:
+            records = cleaned.cleaned_data if isinstance(cleaned.cleaned_data, list) else []
+            algo = cleaned.cleaning_algorithm or "unknown"
+            sector_label = "all"
+            if "__sector__" in algo:
+                sector_label = algo.split("__sector__", 1)[1]
+            base_name = f"cleaned_raw_{raw.id}_{cleaned.id}_{sector_label}"
+
+            if selected_format == "json":
+                archive.writestr(f"{base_name}.json", json.dumps(records, default=str))
+            else:
+                csv_payload = pd.DataFrame(records).to_csv(index=False)
+                archive.writestr(f"{base_name}.csv", csv_payload)
+
+    mem_zip.seek(0)
+    return Response(
+        content=mem_zip.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="cleaned_datasets_{selected_format}.zip"'},
+    )
+
+
+@router.delete("/cleaned-datasets/history")
+async def delete_cleaned_history(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Delete all accessible cleaned dataset history for the current role scope."""
+    sector_ids = _allowed_sector_ids(db, current_user)
+    uploader_ids = _allowed_uploader_ids(db, current_user)
+    if not sector_ids or not uploader_ids:
+        return {"message": "No cleaned history to delete", "deleted_count": 0}
+
+    rows = db.query(CleanedData)\
+        .join(RawData, CleanedData.raw_data_id == RawData.id)\
+        .filter(
+            RawData.sector_id.in_(sector_ids),
+            RawData.uploaded_by.in_(uploader_ids),
+        )\
+        .all()
+
+    if not rows:
+        return {"message": "No cleaned history to delete", "deleted_count": 0}
+
+    deleted_count = 0
+    for cleaned in rows:
+        db.query(DataQualityScore).filter(DataQualityScore.cleaned_data_id == cleaned.id).delete()
+        db.delete(cleaned)
+        deleted_count += 1
+
+    db.commit()
+    return {"message": "Cleaned history deleted", "deleted_count": deleted_count}
 
 
 @router.get("/clean-compare/{data_id}")
@@ -979,19 +1138,32 @@ async def get_sector_insights(
     """Get AI insights and predictions for a sector"""
 
     allowed_sector_ids = _allowed_sector_ids(db, current_user)
+    allowed_uploader_ids = _allowed_uploader_ids(db, current_user)
     if sector_id not in allowed_sector_ids:
         raise HTTPException(status_code=403, detail="Access denied")
+    if not allowed_uploader_ids:
+        return {"sector_id": sector_id, "predictions": [], "recommendations": []}
 
     # Get recent predictions
     predictions = db.query(AIPrediction)\
-        .filter(AIPrediction.sector_id == sector_id)\
+        .join(RawData, RawData.sector_id == AIPrediction.sector_id)\
+        .filter(
+            AIPrediction.sector_id == sector_id,
+            RawData.uploaded_by.in_(allowed_uploader_ids),
+        )\
+        .distinct()\
         .order_by(AIPrediction.predicted_at.desc())\
         .limit(10).all()
 
     # Get recommendations
     recommendations = db.query(AIRecommendation)\
         .join(AIPrediction, AIRecommendation.prediction_id == AIPrediction.id)\
-        .filter(AIPrediction.sector_id == sector_id)\
+        .join(RawData, RawData.sector_id == AIPrediction.sector_id)\
+        .filter(
+            AIPrediction.sector_id == sector_id,
+            RawData.uploaded_by.in_(allowed_uploader_ids),
+        )\
+        .distinct()\
         .order_by(AIRecommendation.created_at.desc())\
         .limit(5).all()
 
@@ -1024,7 +1196,15 @@ async def get_cleaning_stats(
     
     try:
         allowed_sector_ids = _allowed_sector_ids(db, current_user)
+        allowed_uploader_ids = _allowed_uploader_ids(db, current_user)
         if not allowed_sector_ids:
+            return {
+                "total_cleaned": 0,
+                "average_quality_score": 0,
+                "error_breakdown": [],
+                "recent_cleaning_jobs": []
+            }
+        if not allowed_uploader_ids:
             return {
                 "total_cleaned": 0,
                 "average_quality_score": 0,
@@ -1033,7 +1213,10 @@ async def get_cleaning_stats(
             }
         cleaned_data = db.query(CleanedData)\
             .join(RawData, CleanedData.raw_data_id == RawData.id)\
-            .filter(RawData.sector_id.in_(allowed_sector_ids)).all()
+            .filter(
+                RawData.sector_id.in_(allowed_sector_ids),
+                RawData.uploaded_by.in_(allowed_uploader_ids),
+            ).all()
         
         # Calculate statistics
         total_cleaned = len(cleaned_data)

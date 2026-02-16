@@ -41,6 +41,16 @@ def _allowed_sector_ids(db: Session, current_user: User) -> List[int]:
     return [row[0] for row in query.all()]
 
 
+def _allowed_uploader_ids(db: Session, current_user: User) -> List[int]:
+    return [
+        row[0]
+        for row in db.query(User.id).filter(
+            User.company_id == current_user.company_id,
+            User.role == current_user.role,
+        ).all()
+    ]
+
+
 def _ensure_sector_access(db: Session, current_user: User, sector_id: int) -> None:
     if sector_id not in _allowed_sector_ids(db, current_user):
         raise HTTPException(status_code=403, detail="Access denied")
@@ -53,13 +63,20 @@ async def get_role_predictions(
 ):
     """Return role-specific prediction guidance based on datasets used in the system."""
     sector_ids = _allowed_sector_ids(db, current_user)
-    if not sector_ids:
+    uploader_ids = _allowed_uploader_ids(db, current_user)
+    if not sector_ids or not uploader_ids:
         return {"role": current_user.role, "company_id": current_user.company_id, "predictions": []}
 
-    raw_rows = db.query(RawData).filter(RawData.sector_id.in_(sector_ids)).all()
+    raw_rows = db.query(RawData).filter(
+        RawData.sector_id.in_(sector_ids),
+        RawData.uploaded_by.in_(uploader_ids),
+    ).all()
     cleaned_rows = db.query(CleanedData)\
         .join(RawData, CleanedData.raw_data_id == RawData.id)\
-        .filter(RawData.sector_id.in_(sector_ids)).all()
+        .filter(
+            RawData.sector_id.in_(sector_ids),
+            RawData.uploaded_by.in_(uploader_ids),
+        ).all()
 
     total_rows = sum(len(row.data or []) for row in raw_rows)
     cleaned_ratio = (len(cleaned_rows) / max(len(raw_rows), 1)) * 100 if raw_rows else 0
@@ -165,24 +182,64 @@ async def chat_assistant(
         }
 
     sector_ids = _allowed_sector_ids(db, current_user)
-    if not sector_ids:
+    uploader_ids = _allowed_uploader_ids(db, current_user)
+    if not sector_ids or not uploader_ids:
         sector_ids = [-1]
-    total_raw = db.query(RawData).filter(RawData.sector_id.in_(sector_ids)).count()
+        uploader_ids = [-1]
+    total_raw = db.query(RawData).filter(
+        RawData.sector_id.in_(sector_ids),
+        RawData.uploaded_by.in_(uploader_ids),
+    ).count()
     total_cleaned = db.query(CleanedData)\
         .join(RawData, CleanedData.raw_data_id == RawData.id)\
-        .filter(RawData.sector_id.in_(sector_ids)).count()
-    latest_raw = db.query(RawData).filter(RawData.sector_id.in_(sector_ids)).order_by(RawData.uploaded_at.desc()).first()
+        .filter(
+            RawData.sector_id.in_(sector_ids),
+            RawData.uploaded_by.in_(uploader_ids),
+        ).count()
+    latest_raw = db.query(RawData).filter(
+        RawData.sector_id.in_(sector_ids),
+        RawData.uploaded_by.in_(uploader_ids),
+    ).order_by(RawData.uploaded_at.desc()).first()
     latest_cleaned = db.query(CleanedData)\
         .join(RawData, CleanedData.raw_data_id == RawData.id)\
-        .filter(RawData.sector_id.in_(sector_ids))\
+        .filter(
+            RawData.sector_id.in_(sector_ids),
+            RawData.uploaded_by.in_(uploader_ids),
+        )\
         .order_by(CleanedData.cleaned_at.desc()).first()
     latest_quality = round((latest_cleaned.quality_score * 100), 2) if latest_cleaned else 0
+    role_scope = "company-wide" if role_key in ["ceo", "admin"] else "role-limited"
+
+    # Lightweight "training by data": gather recent schema context from accessible datasets.
+    recent_raw = db.query(RawData).filter(
+        RawData.sector_id.in_(sector_ids),
+        RawData.uploaded_by.in_(uploader_ids),
+    ).order_by(RawData.uploaded_at.desc()).limit(20).all()
+    schema_cols = set()
+    for item in recent_raw:
+        if isinstance(item.data, list) and item.data and isinstance(item.data[0], dict):
+            schema_cols.update(item.data[0].keys())
+    schema_preview = ", ".join(sorted(list(schema_cols))[:8]) if schema_cols else "no columns detected"
+
+    if any(keyword in text for keyword in ["all company", "all sectors", "all data"]) and role_key not in ["ceo", "admin"]:
+        return {
+            "reply": (
+                "You can access only your authorized role scope. "
+                "Ask for insights from your assigned sector/company view."
+            ),
+            "suggestions": [
+                "Show my accessible datasets",
+                "What columns exist in my scope?",
+                "How many cleaned datasets can I use?",
+            ],
+        }
 
     if "upload" in text or "dataset" in text:
         reply = (
             f"There are {total_raw} uploaded datasets. "
             f"{total_cleaned} datasets have cleaned output. "
-            f"The latest upload id is {latest_raw.id if latest_raw else 'N/A'}."
+            f"The latest upload id is {latest_raw.id if latest_raw else 'N/A'}. "
+            f"Visible schema sample: {schema_preview}."
         )
         role_hint = {
             "ceo": "You can compare datasets across sectors from dashboard and reports.",
@@ -250,7 +307,7 @@ async def chat_assistant(
     return {
         "reply": (
             f"I can help with uploads, cleaning, visualizations, and reports{page_hint}. "
-            f"Current totals: uploaded={total_raw}, cleaned={total_cleaned}. Ask a specific action."
+            f"Current totals: uploaded={total_raw}, cleaned={total_cleaned}, scope={role_scope}. Ask a specific action."
         ),
         "suggestions": [
             "How to upload and clean a dataset?",
@@ -271,11 +328,17 @@ async def predict_sales(
     """Generate sales/demand forecasting predictions"""
 
     _ensure_sector_access(db, current_user, sector_id)
+    uploader_ids = _allowed_uploader_ids(db, current_user)
+    if not uploader_ids:
+        raise HTTPException(status_code=404, detail="No cleaned data available for prediction")
 
     # Get cleaned data for the sector
     cleaned_data = db.query(CleanedData)\
         .join(RawData)\
-        .filter(RawData.sector_id == sector_id)\
+        .filter(
+            RawData.sector_id == sector_id,
+            RawData.uploaded_by.in_(uploader_ids),
+        )\
         .order_by(CleanedData.cleaned_at.desc())\
         .first()
 
@@ -321,11 +384,17 @@ async def detect_anomalies(
     """Detect trends and anomalies in data"""
 
     _ensure_sector_access(db, current_user, sector_id)
+    uploader_ids = _allowed_uploader_ids(db, current_user)
+    if not uploader_ids:
+        raise HTTPException(status_code=404, detail="No cleaned data available")
 
     # Get cleaned data
     cleaned_data = db.query(CleanedData)\
         .join(RawData)\
-        .filter(RawData.sector_id == sector_id)\
+        .filter(
+            RawData.sector_id == sector_id,
+            RawData.uploaded_by.in_(uploader_ids),
+        )\
         .order_by(CleanedData.cleaned_at.desc())\
         .first()
 
@@ -361,11 +430,17 @@ async def predict_risk(
     """Predict risk using machine learning"""
 
     _ensure_sector_access(db, current_user, sector_id)
+    uploader_ids = _allowed_uploader_ids(db, current_user)
+    if not uploader_ids:
+        raise HTTPException(status_code=404, detail="No cleaned data available")
 
     # Get cleaned data
     cleaned_data = db.query(CleanedData)\
         .join(RawData)\
-        .filter(RawData.sector_id == sector_id)\
+        .filter(
+            RawData.sector_id == sector_id,
+            RawData.uploaded_by.in_(uploader_ids),
+        )\
         .order_by(CleanedData.cleaned_at.desc())\
         .first()
 
@@ -399,10 +474,14 @@ async def generate_recommendations(
     """Generate AI-powered recommendations based on recent predictions"""
 
     _ensure_sector_access(db, current_user, sector_id)
+    uploader_ids = _allowed_uploader_ids(db, current_user)
 
     # Get recent predictions for the sector
     recent_predictions = db.query(AIPrediction)\
+        .join(RawData, RawData.sector_id == AIPrediction.sector_id)\
         .filter(AIPrediction.sector_id == sector_id)\
+        .filter(RawData.uploaded_by.in_(uploader_ids if uploader_ids else [-1]))\
+        .distinct()\
         .order_by(AIPrediction.predicted_at.desc())\
         .limit(5)\
         .all()
@@ -444,6 +523,7 @@ async def rank_sectors(
     """Rank sectors based on performance metrics"""
 
     # Get all sectors and their data
+    uploader_ids = _allowed_uploader_ids(db, current_user)
     sectors = db.query(Sector).filter(Sector.company_id == current_user.company_id).all()
     sector_data = {}
 
@@ -451,7 +531,10 @@ async def rank_sectors(
         # Get cleaned data for each sector
         cleaned_data = db.query(CleanedData)\
             .join(RawData)\
-            .filter(RawData.sector_id == sector.id)\
+            .filter(
+                RawData.sector_id == sector.id,
+                RawData.uploaded_by.in_(uploader_ids if uploader_ids else [-1]),
+            )\
             .order_by(CleanedData.cleaned_at.desc())\
             .first()
 
@@ -478,10 +561,14 @@ async def process_nl_query(
 
     # Get available data based on user role
     available_data = {}
+    uploader_ids = _allowed_uploader_ids(db, current_user)
     if current_user.role == 'sector_head':
         sector_data = db.query(CleanedData)\
             .join(RawData)\
-            .filter(RawData.sector_id == current_user.sector_id)\
+            .filter(
+                RawData.sector_id == current_user.sector_id,
+                RawData.uploaded_by.in_(uploader_ids if uploader_ids else [-1]),
+            )\
             .order_by(CleanedData.cleaned_at.desc())\
             .first()
         if sector_data:
@@ -491,7 +578,14 @@ async def process_nl_query(
         company_sector_ids = _allowed_sector_ids(db, current_user)
         available_data['company_summary'] = {
             'total_sectors': db.query(Sector).filter(Sector.company_id == current_user.company_id).count(),
-            'total_predictions': db.query(AIPrediction).filter(AIPrediction.sector_id.in_(company_sector_ids)).count()
+            'total_predictions': db.query(AIPrediction)
+            .join(RawData, RawData.sector_id == AIPrediction.sector_id)
+            .filter(
+                AIPrediction.sector_id.in_(company_sector_ids),
+                RawData.uploaded_by.in_(uploader_ids if uploader_ids else [-1]),
+            )
+            .distinct()
+            .count()
         }
 
     ai_engine = AIPredictionEngine()
@@ -509,9 +603,13 @@ async def get_predictions(
     """Get prediction history for a sector"""
 
     _ensure_sector_access(db, current_user, sector_id)
+    uploader_ids = _allowed_uploader_ids(db, current_user)
 
     predictions = db.query(AIPrediction)\
+        .join(RawData, RawData.sector_id == AIPrediction.sector_id)\
         .filter(AIPrediction.sector_id == sector_id)\
+        .filter(RawData.uploaded_by.in_(uploader_ids if uploader_ids else [-1]))\
+        .distinct()\
         .order_by(AIPrediction.predicted_at.desc())\
         .limit(limit)\
         .all()
@@ -536,10 +634,14 @@ async def get_recommendations(
     """Get AI recommendations for a sector"""
 
     _ensure_sector_access(db, current_user, sector_id)
+    uploader_ids = _allowed_uploader_ids(db, current_user)
 
     recommendations = db.query(AIRecommendation)\
         .join(AIPrediction)\
+        .join(RawData, RawData.sector_id == AIPrediction.sector_id)\
         .filter(AIPrediction.sector_id == sector_id)\
+        .filter(RawData.uploaded_by.in_(uploader_ids if uploader_ids else [-1]))\
+        .distinct()\
         .order_by(AIRecommendation.created_at.desc())\
         .limit(limit)\
         .all()
