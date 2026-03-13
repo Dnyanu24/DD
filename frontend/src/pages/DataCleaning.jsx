@@ -46,8 +46,10 @@ function normalizeDataset(dataset, index) {
     id: dataset.id ?? index + 1,
     name: dataset.name ?? dataset.filename ?? `dataset_${dataset.id ?? index + 1}.csv`,
     sector: dataset.sector ?? dataset.sector_name ?? "General",
+    product: dataset.product ?? dataset.product_name ?? "Unassigned",
     records: Number(dataset.records ?? dataset.row_count ?? 0),
-    qualityScore: Math.round(Number(dataset.qualityScore ?? dataset.quality_score ?? 0) * 100) / 100,
+    qualityScore: Math.round(Number(dataset.qualityScore ?? dataset.quality_score ?? dataset.estimated_quality_score ?? 0) * 100) / 100,
+    missingPercent: Number(dataset.missingPercent ?? dataset.missing_percent ?? 0),
     status: dataset.has_cleaned_data ? "Cleaned" : "Pending",
     columns: Array.isArray(dataset.columns) ? dataset.columns : [],
   };
@@ -75,6 +77,8 @@ export default function DataCleaning() {
   const [deletingHistory, setDeletingHistory] = useState(false);
   const [comparisonData, setComparisonData] = useState(null);
   const [comparisonLoading, setComparisonLoading] = useState(false);
+  const [showPredictiveDialog, setShowPredictiveDialog] = useState(false);
+  const [showExtremeRiskConfirm, setShowExtremeRiskConfirm] = useState(false);
 
   const activeRunRef = useRef(0);
   const streamAbortRef = useRef(null);
@@ -156,7 +160,13 @@ export default function DataCleaning() {
     ];
   }, [cleaningStats, uploadedData]);
 
-  const handleStartCleaning = async () => {
+  const handleStartCleaning = () => {
+    if (!selectedDataset || isRunningCleaning) return;
+    setShowExtremeRiskConfirm(false);
+    setShowPredictiveDialog(true);
+  };
+
+  const runCleaning = async (predictiveFill) => {
     if (!selectedDataset || isRunningCleaning) return;
 
     const runId = Date.now();
@@ -164,6 +174,8 @@ export default function DataCleaning() {
     if (streamAbortRef.current) streamAbortRef.current.abort();
     streamAbortRef.current = new AbortController();
 
+    setShowPredictiveDialog(false);
+    setShowExtremeRiskConfirm(false);
     setIsRunningCleaning(true);
     setCleaningProgress(0);
     setCleaningSteps([]);
@@ -171,6 +183,7 @@ export default function DataCleaning() {
     setCleaningLogs([
       `[${formatTime(new Date())}] Selected dataset: ${selectedDataset.name}`,
       `[${formatTime(new Date())}] Algorithm: ${selectedAlgorithm}`,
+      `[${formatTime(new Date())}] Predictive blank-value replacement: ${predictiveFill ? "enabled" : "disabled"}`,
     ]);
 
     try {
@@ -184,6 +197,13 @@ export default function DataCleaning() {
           if (event === "start") {
             setStreamStatus("live");
             setCleaningLogs((prev) => [...prev, `[${now}] Real-time stream connected`]);
+            setCleaningLogs((prev) => [
+              ...prev,
+              `[${now}] Predictive blank-value replacement ${data?.predictive_fill ? "enabled" : "disabled"}`,
+            ]);
+            if (data?.audit_warning?.message) {
+              setCleaningLogs((prev) => [...prev, `[${now}] Audit warning: ${data.audit_warning.message}`]);
+            }
             if (data?.adaptive_config) {
               setCleaningLogs((prev) => [
                 ...prev,
@@ -258,13 +278,16 @@ export default function DataCleaning() {
             setCleaningLogs((prev) => [...prev, `[${now}] Stream error: ${data?.message || "Unknown error"}`]);
           }
         },
-      });
+      }, { predictiveFill });
 
       if (!completeEvent) {
         setStreamStatus("fallback");
-        const fallback = await runDataCleaning(selectedDataset.id, selectedAlgorithm);
+        const fallback = await runDataCleaning(selectedDataset.id, selectedAlgorithm, { predictiveFill });
         setCleaningProgress(100);
         setCleaningLogs((prev) => [...prev, `[${formatTime(new Date())}] ${fallback.message || "Fallback cleaning completed"}`]);
+        if (fallback?.audit_warning?.message) {
+          setCleaningLogs((prev) => [...prev, `[${formatTime(new Date())}] Audit warning: ${fallback.audit_warning.message}`]);
+        }
         if (fallback?.cleaning_summary?.cleaned_percent != null) {
           setCleaningLogs((prev) => [
             ...prev,
@@ -283,9 +306,12 @@ export default function DataCleaning() {
       setStreamStatus("fallback");
       setCleaningLogs((prev) => [...prev, `[${formatTime(new Date())}] Stream failed, switching to fallback endpoint`]);
       try {
-        const fallback = await runDataCleaning(selectedDataset.id, selectedAlgorithm);
+        const fallback = await runDataCleaning(selectedDataset.id, selectedAlgorithm, { predictiveFill });
         setCleaningProgress(100);
         setCleaningLogs((prev) => [...prev, `[${formatTime(new Date())}] ${fallback.message || "Fallback cleaning completed"}`]);
+        if (fallback?.audit_warning?.message) {
+          setCleaningLogs((prev) => [...prev, `[${formatTime(new Date())}] Audit warning: ${fallback.audit_warning.message}`]);
+        }
         if (fallback?.cleaning_summary?.cleaned_percent != null) {
           setCleaningLogs((prev) => [
             ...prev,
@@ -378,6 +404,39 @@ export default function DataCleaning() {
         return { label: "Idle", className: "bg-clay-100 text-clay-700 dark:bg-slate-800 dark:text-slate-300" };
     }
   }, [streamStatus]);
+
+  const predictiveFillRisk = useMemo(() => {
+    if (!selectedDataset) return null;
+
+    const missingPercent = Number(selectedDataset.missingPercent || 0);
+    if (missingPercent >= 40) {
+      return {
+        tone: "high",
+        title: "High missing-value rate",
+        message: `${missingPercent}% of cells are blank. Predictive fill may be unreliable unless the remaining columns are strongly related.`,
+        className: "border-red-200 bg-red-50 text-red-800 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-200",
+      };
+    }
+    if (missingPercent >= 20) {
+      return {
+        tone: "medium",
+        title: "Moderate missing-value rate",
+        message: `${missingPercent}% of cells are blank. Predictive fill is reasonable, but review the output before using it for reporting or AI predictions.`,
+        className: "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200",
+      };
+    }
+    return {
+      tone: "low",
+      title: "Low missing-value rate",
+      message: `${missingPercent}% of cells are blank. Predictive fill should be relatively stable if the dataset has consistent patterns.`,
+      className: "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-200",
+    };
+  }, [selectedDataset]);
+
+  const requiresExtremeRiskConfirm = useMemo(
+    () => Number(selectedDataset?.missingPercent || 0) >= 60,
+    [selectedDataset]
+  );
 
   return (
     <div className="data-cleaning-page min-h-screen p-6">
@@ -692,6 +751,105 @@ export default function DataCleaning() {
           </div>
         )}
       </section>
+
+      {showPredictiveDialog ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4">
+          <div className="w-full max-w-lg rounded-2xl border border-clay-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-900">
+            <div className="flex items-start gap-3">
+              <div className="rounded-xl bg-teal-50 p-3 dark:bg-teal-900/20">
+                <WandSparkles className="h-5 w-5 text-teal-600 dark:text-teal-300" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-clay-900 dark:text-slate-100">
+                  Replace blank values with predictive data?
+                </h3>
+                <p className="mt-2 text-sm leading-6 text-clay-600 dark:text-slate-400">
+                  If you allow this, missing cells will be estimated from the surrounding row and column patterns before cleaning continues.
+                  If you skip it, the normal cleaning flow will run exactly as it does now.
+                </p>
+              </div>
+            </div>
+
+            {predictiveFillRisk ? (
+              <div className={`mt-5 rounded-xl border p-4 ${predictiveFillRisk.className}`}>
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <div>
+                    <p className="text-sm font-semibold">{predictiveFillRisk.title}</p>
+                    <p className="mt-1 text-sm leading-6">
+                      {predictiveFillRisk.message}
+                    </p>
+                    <p className="mt-2 text-xs opacity-80">
+                      Dataset: {selectedDataset?.name} | Product: {selectedDataset?.product} | Sector: {selectedDataset?.sector}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={() => setShowPredictiveDialog(false)}
+                className="rounded-lg border border-clay-300 px-4 py-2 text-sm font-semibold text-clay-700 hover:bg-clay-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => runCleaning(false)}
+                className="rounded-lg border border-clay-300 px-4 py-2 text-sm font-semibold text-clay-700 hover:bg-clay-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+              >
+                Continue Normal Cleaning
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (requiresExtremeRiskConfirm && !showExtremeRiskConfirm) {
+                    setShowExtremeRiskConfirm(true);
+                    return;
+                  }
+                  runCleaning(true);
+                }}
+                className="rounded-lg bg-gradient-to-r from-teal-500 to-cyan-500 px-4 py-2 text-sm font-semibold text-white hover:from-teal-600 hover:to-cyan-600"
+              >
+                {requiresExtremeRiskConfirm && !showExtremeRiskConfirm ? "Review High-Risk Fill" : "Use Predictive Fill"}
+              </button>
+            </div>
+
+            {requiresExtremeRiskConfirm ? (
+              <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-red-800 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-200">
+                <p className="text-sm font-semibold">Extra confirmation required</p>
+                <p className="mt-1 text-sm leading-6">
+                  This dataset has {selectedDataset?.missingPercent}% blank cells. Predictive fill can generate low-confidence values at this level of missingness.
+                </p>
+                {showExtremeRiskConfirm ? (
+                  <div className="mt-3 flex flex-wrap items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => runCleaning(true)}
+                      className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
+                    >
+                      Confirm Predictive Fill Anyway
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowExtremeRiskConfirm(false)}
+                      className="rounded-lg border border-red-300 px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-100 dark:border-red-800 dark:text-red-200 dark:hover:bg-red-900/30"
+                    >
+                      Go Back
+                    </button>
+                  </div>
+                ) : (
+                  <p className="mt-2 text-xs opacity-80">
+                    Click the predictive-fill button again to unlock the final confirmation.
+                  </p>
+                )}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -1,9 +1,11 @@
+from collections import defaultdict
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import Optional, List
 from pydantic import BaseModel
 from app.database import SessionLocal
-from app.models import AIPrediction, AIRecommendation, Sector, RawData, CleanedData, User
+from app.models import AIPrediction, AIRecommendation, Sector, RawData, CleanedData, User, Product
 from app.services.ai_predictions import AIPredictionEngine
 from app.dependencies import get_current_user, require_sector_head, require_ceo
 
@@ -54,6 +56,126 @@ def _allowed_uploader_ids(db: Session, current_user: User) -> List[int]:
 def _ensure_sector_access(db: Session, current_user: User, sector_id: int) -> None:
     if sector_id not in _allowed_sector_ids(db, current_user):
         raise HTTPException(status_code=403, detail="Access denied")
+
+
+def _company_sector_ids(db: Session, current_user: User) -> List[int]:
+    return [row[0] for row in db.query(Sector.id).filter(Sector.company_id == current_user.company_id).all()]
+
+
+def _safe_float(value) -> Optional[float]:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        cleaned = str(value).replace(",", "").strip()
+        if cleaned == "":
+            return None
+        return float(cleaned)
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_dataset_signal(records: List[dict]) -> dict:
+    if not isinstance(records, list) or not records:
+        return {"metric_value": 0.0, "metric_key": "rows", "metric_label": "Rows"}
+
+    preferred_keywords = ["revenue", "sales", "amount", "total", "profit", "demand", "quantity", "qty", "units"]
+    scored_columns = []
+    columns = set()
+    for row in records:
+        if isinstance(row, dict):
+            columns.update(row.keys())
+
+    for column in columns:
+        numeric_values = []
+        column_key = str(column).lower()
+        for row in records:
+            if not isinstance(row, dict):
+                continue
+            numeric_value = _safe_float(row.get(column))
+            if numeric_value is not None:
+                numeric_values.append(numeric_value)
+        if not numeric_values:
+            continue
+        keyword_bonus = 0
+        for index, keyword in enumerate(preferred_keywords):
+            if keyword in column_key:
+                keyword_bonus = len(preferred_keywords) - index
+                break
+        scored_columns.append(
+            {
+                "column": str(column),
+                "score": keyword_bonus * 1000 + len(numeric_values),
+                "sum": float(sum(numeric_values)),
+            }
+        )
+
+    if scored_columns:
+        chosen = sorted(scored_columns, key=lambda item: item["score"], reverse=True)[0]
+        return {
+            "metric_value": round(chosen["sum"], 2),
+            "metric_key": chosen["column"],
+            "metric_label": chosen["column"].replace("_", " ").title(),
+        }
+
+    return {"metric_value": float(len(records)), "metric_key": "rows", "metric_label": "Rows"}
+
+
+def _estimate_records_quality(records: List[dict]) -> float:
+    if not isinstance(records, list) or not records:
+        return 0.0
+    dict_rows = [row for row in records if isinstance(row, dict)]
+    if not dict_rows:
+        return 0.0
+    total_cells = max(len(dict_rows) * max(len(dict_rows[0].keys()), 1), 1)
+    missing_cells = sum(
+        1
+        for row in dict_rows
+        for value in row.values()
+        if value in [None, ""]
+    )
+    return round(max(0.0, 1 - (missing_cells / total_cells)), 4)
+
+
+def _recent_growth_percent(series: List[float]) -> float:
+    if not series:
+        return 0.0
+    recent = sum(series[-2:])
+    baseline = sum(series[-4:-2]) if len(series) >= 4 else sum(series[:-2])
+    if baseline > 0:
+        return round(((recent - baseline) / baseline) * 100, 2)
+    if recent > 0:
+        return 18.0
+    return 0.0
+
+
+def _confidence_score(avg_quality: float, cleaned_datasets: int, total_datasets: int) -> float:
+    coverage = cleaned_datasets / max(total_datasets, 1)
+    confidence = 0.35 + (avg_quality * 0.4) + (min(cleaned_datasets / 5, 1.0) * 0.15) + (coverage * 0.1)
+    return round(min(max(confidence, 0.05), 0.98), 2)
+
+
+def _investment_signal(growth_percent: float, avg_quality: float, cleaned_datasets: int, total_datasets: int) -> dict:
+    coverage = (cleaned_datasets / max(total_datasets, 1)) * 100
+    growth_score = min(max((growth_percent + 20) / 55, 0), 1) * 100
+    quality_score = avg_quality * 100
+    investment_score = round((growth_score * 0.45) + (quality_score * 0.35) + (coverage * 0.2), 2)
+    confidence = _confidence_score(avg_quality, cleaned_datasets, total_datasets)
+
+    if investment_score >= 70 and growth_percent >= 8 and avg_quality >= 0.75:
+        stance = "Invest"
+    elif investment_score >= 52 and growth_percent >= 0:
+        stance = "Watch"
+    else:
+        stance = "Do Not Invest"
+
+    return {
+        "investment_score": investment_score,
+        "confidence": confidence,
+        "stance": stance,
+        "coverage_percent": round(coverage, 2),
+    }
 
 
 @router.get("/role-predictions", response_model=RolePredictionResponse)
@@ -158,6 +280,256 @@ async def get_role_predictions(
         "role": current_user.role,
         "company_id": current_user.company_id,
         "predictions": predictions,
+    }
+
+
+@router.get("/ceo-growth-outlook")
+async def get_ceo_growth_outlook(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_ceo)
+):
+    """Company-wide growth outlook for CEO dashboards using cleaned datasets and product-sector signals."""
+    sector_ids = _company_sector_ids(db, current_user)
+    if not sector_ids:
+        return {
+            "generated_at": datetime.utcnow().isoformat(),
+            "summary": {},
+            "timeline": [],
+            "sector_outlook": [],
+            "product_opportunities": [],
+            "recommendations": [],
+        }
+
+    raw_rows = db.query(RawData, Sector, Product)\
+        .join(Sector, RawData.sector_id == Sector.id)\
+        .outerjoin(Product, Product.id == RawData.product_id)\
+        .filter(RawData.sector_id.in_(sector_ids))\
+        .all()
+
+    cleaned_rows = db.query(CleanedData, RawData, Sector, Product)\
+        .join(RawData, CleanedData.raw_data_id == RawData.id)\
+        .join(Sector, RawData.sector_id == Sector.id)\
+        .outerjoin(Product, Product.id == RawData.product_id)\
+        .filter(
+            RawData.sector_id.in_(sector_ids),
+            ~CleanedData.cleaning_algorithm.contains("__sector__"),
+        )\
+        .all()
+
+    if not raw_rows:
+        return {
+            "generated_at": datetime.utcnow().isoformat(),
+            "summary": {
+                "message": "No sector datasets available for company-wide growth prediction.",
+                "sector_count": len(sector_ids),
+                "cleaned_datasets": 0,
+            },
+            "timeline": [],
+            "sector_outlook": [],
+            "product_opportunities": [],
+            "recommendations": [],
+        }
+
+    now = datetime.utcnow()
+    period_keys = []
+    year = now.year
+    month = now.month
+    for offset in range(5, -1, -1):
+        calc_month = month - offset
+        calc_year = year
+        while calc_month <= 0:
+            calc_month += 12
+            calc_year -= 1
+        period_keys.append(f"{calc_year:04d}-{calc_month:02d}")
+
+    sector_totals = defaultdict(lambda: {
+        "sector_name": "Unknown",
+        "cleaned_datasets": 0,
+        "source_datasets": 0,
+        "total_datasets": 0,
+        "metric_total": 0.0,
+        "quality_sum": 0.0,
+        "periods": defaultdict(float),
+        "products": defaultdict(lambda: {
+            "product_name": "Unassigned",
+            "metric_total": 0.0,
+            "quality_sum": 0.0,
+            "cleaned_datasets": 0,
+            "source_datasets": 0,
+            "periods": defaultdict(float),
+        }),
+    })
+    timeline_totals = defaultdict(lambda: {"metric_total": 0.0, "quality_sum": 0.0, "datasets": 0})
+
+    cleaned_by_raw_id = {raw.id: cleaned for cleaned, raw, _sector, _product in cleaned_rows}
+    raw_count_by_sector = defaultdict(int)
+    source_mix = {"cleaned": 0, "raw": 0}
+    for raw, sector, _product in raw_rows:
+        raw_count_by_sector[sector.id] += 1
+        cleaned = cleaned_by_raw_id.get(raw.id)
+        records = cleaned.cleaned_data if cleaned and isinstance(cleaned.cleaned_data, list) else (raw.data if isinstance(raw.data, list) else [])
+        signal = _extract_dataset_signal(records)
+        effective_quality = float(cleaned.quality_score or 0) if cleaned else _estimate_records_quality(records)
+        period_key = ((cleaned.cleaned_at if cleaned else None) or raw.uploaded_at or now).strftime("%Y-%m")
+        product_name = product.name if product else "Unassigned"
+        source_mix["cleaned" if cleaned else "raw"] += 1
+
+        sector_bucket = sector_totals[sector.id]
+        sector_bucket["sector_name"] = sector.name
+        sector_bucket["cleaned_datasets"] += 1 if cleaned else 0
+        sector_bucket["source_datasets"] += 1
+        sector_bucket["metric_total"] += signal["metric_value"]
+        sector_bucket["quality_sum"] += effective_quality
+        sector_bucket["periods"][period_key] += signal["metric_value"]
+
+        product_bucket = sector_bucket["products"][raw.product_id or 0]
+        product_bucket["product_name"] = product_name
+        product_bucket["metric_total"] += signal["metric_value"]
+        product_bucket["quality_sum"] += effective_quality
+        product_bucket["cleaned_datasets"] += 1 if cleaned else 0
+        product_bucket["source_datasets"] += 1
+        product_bucket["periods"][period_key] += signal["metric_value"]
+
+        timeline_totals[period_key]["metric_total"] += signal["metric_value"]
+        timeline_totals[period_key]["quality_sum"] += effective_quality
+        timeline_totals[period_key]["datasets"] += 1
+
+    sector_outlook = []
+    product_opportunities = []
+    recommendations = []
+
+    for sector_id, sector_bucket in sector_totals.items():
+        sector_bucket["total_datasets"] = raw_count_by_sector.get(sector_id, sector_bucket["cleaned_datasets"])
+        sector_series = [round(sector_bucket["periods"].get(period_key, 0.0), 2) for period_key in period_keys]
+        sector_growth = _recent_growth_percent(sector_series)
+        avg_quality = sector_bucket["quality_sum"] / max(sector_bucket["source_datasets"], 1)
+        investment = _investment_signal(
+            growth_percent=sector_growth,
+            avg_quality=avg_quality,
+            cleaned_datasets=sector_bucket["source_datasets"],
+            total_datasets=sector_bucket["total_datasets"],
+        )
+
+        ranked_products = []
+        for product_id, product_bucket in sector_bucket["products"].items():
+            product_series = [round(product_bucket["periods"].get(period_key, 0.0), 2) for period_key in period_keys]
+            product_growth = _recent_growth_percent(product_series)
+            product_quality = product_bucket["quality_sum"] / max(product_bucket["source_datasets"], 1)
+            product_signal = _investment_signal(
+                growth_percent=product_growth,
+                avg_quality=product_quality,
+                cleaned_datasets=product_bucket["source_datasets"],
+                total_datasets=sector_bucket["total_datasets"],
+            )
+            product_row = {
+                "product_id": product_id or None,
+                "product_name": product_bucket["product_name"],
+                "sector_id": sector_id,
+                "sector_name": sector_bucket["sector_name"],
+                "growth_percent": round(product_growth, 2),
+                "quality_score": round(product_quality * 100, 2),
+                "confidence": round(product_signal["confidence"] * 100, 2),
+                "recommendation": product_signal["stance"],
+                "investment_score": product_signal["investment_score"],
+                "metric_total": round(product_bucket["metric_total"], 2),
+                "source": "mixed" if product_bucket["cleaned_datasets"] and product_bucket["cleaned_datasets"] < product_bucket["source_datasets"] else ("cleaned" if product_bucket["cleaned_datasets"] else "raw"),
+            }
+            ranked_products.append(product_row)
+            product_opportunities.append(product_row)
+
+        ranked_products.sort(key=lambda item: (item["investment_score"], item["growth_percent"]), reverse=True)
+        top_product = ranked_products[0] if ranked_products else None
+
+        sector_row = {
+            "sector_id": sector_id,
+            "sector_name": sector_bucket["sector_name"],
+            "growth_percent": round(sector_growth, 2),
+            "avg_quality": round(avg_quality * 100, 2),
+            "confidence": round(investment["confidence"] * 100, 2),
+            "recommendation": investment["stance"],
+            "investment_score": investment["investment_score"],
+            "coverage_percent": investment["coverage_percent"],
+            "cleaned_datasets": sector_bucket["cleaned_datasets"],
+            "source_datasets": sector_bucket["source_datasets"],
+            "total_datasets": sector_bucket["total_datasets"],
+            "metric_total": round(sector_bucket["metric_total"], 2),
+            "top_product": top_product["product_name"] if top_product else "Unassigned",
+            "top_product_growth": top_product["growth_percent"] if top_product else 0,
+            "source": "mixed" if sector_bucket["cleaned_datasets"] and sector_bucket["cleaned_datasets"] < sector_bucket["source_datasets"] else ("cleaned" if sector_bucket["cleaned_datasets"] else "raw"),
+        }
+        sector_outlook.append(sector_row)
+        recommendations.append(
+            {
+                "sector_name": sector_row["sector_name"],
+                "product_name": sector_row["top_product"],
+                "recommendation": sector_row["recommendation"],
+                "confidence": sector_row["confidence"],
+                "rationale": (
+                    f"{sector_row['sector_name']} shows {sector_row['growth_percent']}% projected momentum "
+                    f"with {sector_row['avg_quality']}% data quality from {sector_row['source']} database inputs. "
+                    f"Top product: {sector_row['top_product']}."
+                ),
+            }
+        )
+
+    sector_outlook.sort(key=lambda item: (item["investment_score"], item["growth_percent"]), reverse=True)
+    product_opportunities.sort(key=lambda item: (item["investment_score"], item["growth_percent"]), reverse=True)
+    recommendations.sort(key=lambda item: item["confidence"], reverse=True)
+
+    timeline = []
+    timeline_values = [round(timeline_totals[period_key]["metric_total"], 2) for period_key in period_keys]
+    company_growth = _recent_growth_percent(timeline_values)
+    projection_multiplier = 1 + max(min(company_growth / 100, 0.35), -0.2)
+
+    for index, period_key in enumerate(period_keys):
+        period_year, period_month = period_key.split("-")
+        period_dt = datetime(int(period_year), int(period_month), 1)
+        bucket = timeline_totals[period_key]
+        avg_quality = (bucket["quality_sum"] / bucket["datasets"]) if bucket["datasets"] else 0.0
+        actual_value = round(bucket["metric_total"], 2)
+        projected_value = round(actual_value * projection_multiplier, 2)
+        timeline.append(
+            {
+                "period": period_dt.strftime("%b"),
+                "period_key": period_key,
+                "actual": actual_value,
+                "projected": projected_value,
+                "quality": round(avg_quality * 100, 2),
+                "datasets": bucket["datasets"],
+            }
+        )
+
+    invest_count = sum(1 for row in sector_outlook if row["recommendation"] == "Invest")
+    watch_count = sum(1 for row in sector_outlook if row["recommendation"] == "Watch")
+    avoid_count = sum(1 for row in sector_outlook if row["recommendation"] == "Do Not Invest")
+    best_sector = sector_outlook[0] if sector_outlook else None
+    best_product = product_opportunities[0] if product_opportunities else None
+    avg_confidence = round(
+        sum(row["confidence"] for row in sector_outlook) / max(len(sector_outlook), 1),
+        2,
+    )
+
+    return {
+        "generated_at": now.isoformat(),
+        "summary": {
+            "projected_growth_percent": round(company_growth, 2),
+            "avg_confidence": avg_confidence,
+            "invest_count": invest_count,
+            "watch_count": watch_count,
+            "avoid_count": avoid_count,
+            "cleaned_datasets": len(cleaned_rows),
+            "raw_fallback_datasets": source_mix["raw"],
+            "mixed_source_datasets": source_mix["cleaned"] + source_mix["raw"],
+            "sector_count": len(sector_outlook),
+            "top_sector": best_sector["sector_name"] if best_sector else None,
+            "top_product": best_product["product_name"] if best_product else None,
+            "top_product_sector": best_product["sector_name"] if best_product else None,
+            "data_source": "cleaned_and_raw_database",
+        },
+        "timeline": timeline,
+        "sector_outlook": sector_outlook,
+        "product_opportunities": product_opportunities[:8],
+        "recommendations": recommendations[:6],
     }
 
 

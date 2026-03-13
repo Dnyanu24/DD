@@ -442,7 +442,7 @@ export async function downloadAllCleanedDatasets(format = "csv") {
   }
   const blob = await res.blob();
   const disposition = res.headers.get("content-disposition") || "";
-  const match = disposition.match(/filename=\"?([^\";]+)\"?/i);
+  const match = disposition.match(/filename="?([^";]+)"?/i);
   return {
     blob,
     filename: match?.[1] || `cleaned_datasets_${format}.zip`,
@@ -476,6 +476,19 @@ export async function getUploadedData() {
   return data;
 }
 
+export async function getVisualizationData() {
+  const res = await requestWithBaseFallback(`/api/analysis/visualization-data`, {
+    headers: {
+      ...getAuthHeaders(),
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.detail || data?.message || "Failed to load visualization data");
+  }
+  return data;
+}
+
 export async function deleteUploadedDataset(dataId) {
   const res = await requestWithBaseFallback(`/api/upload/uploaded-data/${dataId}`, {
     method: "DELETE",
@@ -490,8 +503,12 @@ export async function deleteUploadedDataset(dataId) {
   return data;
 }
 
-export async function runDataCleaning(dataId, algorithm) {
-  const res = await fetch(`${BASE_URL}/api/analysis/clean/${dataId}?algorithm=${encodeURIComponent(algorithm)}`, {
+export async function runDataCleaning(dataId, algorithm, options = {}) {
+  const params = new URLSearchParams({
+    algorithm,
+    predictive_fill: String(Boolean(options.predictiveFill)),
+  });
+  const res = await fetch(`${BASE_URL}/api/analysis/clean/${dataId}?${params.toString()}`, {
     method: "POST",
     headers: {
       ...getAuthHeaders(),
@@ -504,9 +521,13 @@ export async function runDataCleaning(dataId, algorithm) {
   return data;
 }
 
-export async function streamDataCleaning(dataId, algorithm, handlers = {}) {
+export async function streamDataCleaning(dataId, algorithm, handlers = {}, options = {}) {
   const { onEvent, signal } = handlers;
-  const url = `${BASE_URL}/api/analysis/clean-stream/${dataId}?algorithm=${encodeURIComponent(algorithm)}`;
+  const params = new URLSearchParams({
+    algorithm,
+    predictive_fill: String(Boolean(options.predictiveFill)),
+  });
+  const url = `${BASE_URL}/api/analysis/clean-stream/${dataId}?${params.toString()}`;
 
   const res = await fetch(url, {
     method: "GET",
@@ -632,6 +653,19 @@ export async function getRolePredictions() {
   const data = await res.json();
   if (!res.ok) {
     throw new Error(data?.detail || data?.message || "Failed to load role predictions");
+  }
+  return data;
+}
+
+export async function getCeoGrowthOutlook() {
+  const res = await requestWithBaseFallback(`/api/ai/ceo-growth-outlook`, {
+    headers: {
+      ...getAuthHeaders(),
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.detail || data?.message || "Failed to load CEO growth outlook");
   }
   return data;
 }

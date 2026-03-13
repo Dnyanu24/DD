@@ -240,10 +240,21 @@ async def get_uploaded_data(
                 # Safely get row and column counts
                 row_count = 0
                 column_count = 0
+                missing_cells = 0
+                missing_percent = 0.0
                 if data.data and isinstance(data.data, list) and len(data.data) > 0:
                     row_count = len(data.data)
                     if isinstance(data.data[0], dict):
                         column_count = len(data.data[0].keys())
+                        total_cells = max(row_count * max(column_count, 1), 1)
+                        missing_cells = sum(
+                            1
+                            for row in data.data
+                            if isinstance(row, dict)
+                            for value in row.values()
+                            if value in [None, ""]
+                        )
+                        missing_percent = round((missing_cells / total_cells) * 100, 2)
                 
                 result.append({
                     "id": data.id,
@@ -256,10 +267,13 @@ async def get_uploaded_data(
                     "uploaded_at": data.uploaded_at.isoformat() if hasattr(data, 'uploaded_at') and data.uploaded_at else None,
                     "row_count": row_count,
                     "column_count": column_count,
+                    "missing_cells": missing_cells,
+                    "missing_percent": missing_percent,
                     "columns": list(data.data[0].keys()) if row_count > 0 and isinstance(data.data[0], dict) else [],
                     "has_cleaned_data": cleaned is not None,
                     "cleaned_data_id": cleaned.id if cleaned else None,
-                    "quality_score": cleaned.quality_score if cleaned else None
+                    "quality_score": cleaned.quality_score if cleaned else None,
+                    "estimated_quality_score": round(max(0.0, 1 - (missing_percent / 100)), 4),
                 })
             except Exception as item_error:
                 # Skip items that cause errors

@@ -1,420 +1,427 @@
 import { useEffect, useMemo, useState } from "react";
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  ComposedChart,
-  Legend,
-  Line,
-  LineChart,
-  Pie,
-  PieChart,
-  PolarAngleAxis,
-  PolarGrid,
-  PolarRadiusAxis,
-  Radar,
-  RadarChart,
-  ResponsiveContainer,
-  Sankey,
-  Scatter,
-  ScatterChart,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
-import { Loader2 } from "lucide-react";
-import { getUploadedData } from "../services/api";
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Line, LineChart, Pie, PieChart, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis } from "recharts";
+import { BarChart3, Filter, Layers3, Loader2, Package2, SlidersHorizontal, Sparkles } from "lucide-react";
+import { getVisualizationData } from "../services/api";
 
-const COLORS = ["#14b8a6", "#0ea5e9", "#22c55e", "#f59e0b", "#ef4444", "#6366f1"];
-
-const FALLBACK_DATA = [
-  { id: 1, sector_name: "Sales", row_count: 12200, uploaded_at: "2026-01-05T10:00:00", quality_score: 0.82, has_cleaned_data: true },
-  { id: 2, sector_name: "Marketing", row_count: 8400, uploaded_at: "2026-01-08T08:10:00", quality_score: 0.75, has_cleaned_data: false },
-  { id: 3, sector_name: "Operations", row_count: 18900, uploaded_at: "2026-01-12T12:30:00", quality_score: 0.91, has_cleaned_data: true },
-  { id: 4, sector_name: "Sales", row_count: 10200, uploaded_at: "2026-02-01T08:20:00", quality_score: 0.88, has_cleaned_data: true },
-  { id: 5, sector_name: "Support", row_count: 5300, uploaded_at: "2026-02-02T11:40:00", quality_score: 0.69, has_cleaned_data: false },
-  { id: 6, sector_name: "Operations", row_count: 17600, uploaded_at: "2026-02-08T13:00:00", quality_score: 0.86, has_cleaned_data: true },
+const C = { primary: "#14b8a6", secondary: "#0ea5e9", tertiary: "#22c55e", warning: "#f59e0b", danger: "#ef4444", deep: "#0f766e" };
+const FALLBACK = [
+  { id: 1, sector_name: "Sales", product_name: "Product A", row_count: 12200, uploaded_at: "2026-01-05T10:00:00", quality_score: 0.82, has_cleaned_data: true },
+  { id: 2, sector_name: "Marketing", product_name: "Campaign X", row_count: 8400, uploaded_at: "2026-01-08T08:10:00", quality_score: 0.75, has_cleaned_data: false },
+  { id: 3, sector_name: "Operations", product_name: "Service Ops", row_count: 18900, uploaded_at: "2026-01-12T12:30:00", quality_score: 0.91, has_cleaned_data: true },
+  { id: 4, sector_name: "Sales", product_name: "Product B", row_count: 10200, uploaded_at: "2026-02-01T08:20:00", quality_score: 0.88, has_cleaned_data: true },
+  { id: 5, sector_name: "Support", product_name: "Tickets", row_count: 5300, uploaded_at: "2026-02-02T11:40:00", quality_score: 0.69, has_cleaned_data: false },
+  { id: 6, sector_name: "Operations", product_name: "Warehouse", row_count: 17600, uploaded_at: "2026-02-08T13:00:00", quality_score: 0.86, has_cleaned_data: true },
+  { id: 7, sector_name: "Finance", product_name: "Ledger", row_count: 9600, uploaded_at: "2026-03-01T10:20:00", quality_score: 0.8, has_cleaned_data: true },
+  { id: 8, sector_name: "Sales", product_name: "Product A", row_count: 14800, uploaded_at: "2026-03-04T15:00:00", quality_score: 0.93, has_cleaned_data: true },
 ];
 
-function normalizeData(rows) {
+const GROUPS = [{ value: "sector_name", label: "Sector" }, { value: "product_name", label: "Product" }, { value: "status", label: "Status" }];
+const GRAINS = [{ value: "monthly", label: "Monthly" }, { value: "quarterly", label: "Quarterly" }, { value: "weekly", label: "Weekly" }];
+const METRICS = [{ value: "row_count", label: "Rows" }, { value: "dataset_count", label: "Datasets" }, { value: "quality", label: "Quality" }];
+
+function normalize(rows) {
   return rows.map((item, index) => ({
     id: item.id ?? index + 1,
     sector_name: item.sector_name ?? item.sector ?? "General",
+    product_name: item.product_name ?? item.product ?? "Unassigned",
     row_count: Number(item.row_count ?? item.records ?? 0),
-    uploaded_at: item.uploaded_at ?? new Date().toISOString(),
+    uploaded_at: item.uploaded_at ?? item.time_reference ?? new Date().toISOString(),
+    cleaned_at: item.cleaned_at ?? null,
+    time_reference: item.time_reference ?? item.cleaned_at ?? item.uploaded_at ?? new Date().toISOString(),
     quality_score: Number(item.quality_score ?? item.qualityScore ?? 0),
     has_cleaned_data: Boolean(item.has_cleaned_data ?? false),
+    status: item.status ?? (item.has_cleaned_data ? "Cleaned" : "Pending"),
+    source: item.source ?? (item.has_cleaned_data ? "cleaned_data" : "raw_data"),
+    column_count: Number(item.column_count ?? 0),
   }));
 }
 
-function monthLabel(dateValue) {
-  const d = new Date(dateValue);
-  return d.toLocaleString("en-US", { month: "short" });
+function bucket(dateValue, grain) {
+  const date = new Date(dateValue);
+  if (grain === "quarterly") return `Q${Math.floor(date.getMonth() / 3) + 1} ${date.getFullYear()}`;
+  if (grain === "weekly") {
+    const start = new Date(date.getFullYear(), 0, 1);
+    const week = Math.ceil((((date - start) / 86400000) + start.getDay() + 1) / 7);
+    return `W${week} ${date.getFullYear()}`;
+  }
+  return date.toLocaleString("en-US", { month: "short", year: "numeric" });
 }
 
-function quantile(sortedValues, p) {
-  if (!sortedValues.length) return 0;
-  const index = (sortedValues.length - 1) * p;
-  const floor = Math.floor(index);
-  const ceil = Math.ceil(index);
-  if (floor === ceil) return sortedValues[floor];
-  return sortedValues[floor] + (sortedValues[ceil] - sortedValues[floor]) * (index - floor);
+function qualityBand(score) {
+  const pct = (score || 0) * 100;
+  if (pct >= 85) return "High";
+  if (pct >= 70) return "Medium";
+  return "Low";
 }
 
-function ChartCard({ title, children, className = "" }) {
+function palette(index) {
+  return [C.primary, C.secondary, C.tertiary, C.warning, C.danger, C.deep][index % 6];
+}
+
+function chartTooltip() {
+  return {
+    backgroundColor: "var(--bg-card)",
+    border: "1px solid var(--border-light)",
+    borderRadius: "18px",
+    boxShadow: "0 14px 40px -24px rgba(15, 23, 42, 0.35)",
+  };
+}
+
+function SelectChip({ label, value, onChange, options }) {
   return (
-    <div className={`bg-theme-card rounded-xl border border-theme-light p-5 ${className}`}>
-      <h2 className="sr-only">{title}</h2>
-      {children}
+    <label className="flex items-center gap-2 rounded-full border border-theme-light bg-theme-secondary px-3 py-2 text-xs font-semibold text-theme-muted">
+      <span>{label}</span>
+      <select value={value} onChange={(event) => onChange(event.target.value)} className="bg-transparent text-theme-primary">
+        {options.map((option) => <option key={option.value ?? option} value={option.value ?? option}>{option.label ?? option}</option>)}
+      </select>
+    </label>
+  );
+}
+
+function Tabs({ value, onChange, options }) {
+  return (
+    <div className="inline-flex flex-wrap gap-2 rounded-full bg-theme-secondary p-1">
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          onClick={() => onChange(option.value)}
+          className={`rounded-full px-3 py-1.5 text-xs font-semibold ${value === option.value ? "bg-white text-slate-900 dark:bg-slate-900 dark:text-white" : "text-theme-muted hover:text-theme-primary"}`}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function Card({ title, subtitle, action, children }) {
+  return (
+    <section className="overflow-hidden rounded-[30px] border border-theme-light bg-theme-card shadow-theme">
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-theme-light px-6 py-5">
+        <div>
+          <h2 className="text-lg font-semibold text-theme-primary">{title}</h2>
+          <p className="mt-1 text-sm text-theme-muted">{subtitle}</p>
+        </div>
+        {action}
+      </div>
+      <div className="p-5">{children}</div>
+    </section>
+  );
+}
+
+function Stat({ label, value, hint, icon }) {
+  const Icon = icon;
+  return (
+    <div className="rounded-[24px] border border-theme-light bg-theme-card p-5 shadow-theme">
+      <div className="flex items-center justify-between">
+        <span className="text-sm text-theme-muted">{label}</span>
+        <span className="rounded-xl bg-theme-secondary p-2 text-theme-primary"><Icon className="h-4 w-4" /></span>
+      </div>
+      <p className="mt-4 text-3xl font-semibold text-theme-primary">{value}</p>
+      <p className="mt-1 text-sm text-theme-muted">{hint}</p>
     </div>
   );
 }
 
 export default function Visualizations() {
   const [isLoading, setIsLoading] = useState(true);
-  const [uploadedRows, setUploadedRows] = useState([]);
+  const [rows, setRows] = useState([]);
+  const [groupBy, setGroupBy] = useState("product_name");
+  const [granularity, setGranularity] = useState("monthly");
+  const [metric, setMetric] = useState("row_count");
+  const [sector, setSector] = useState("all");
+  const [product, setProduct] = useState("all");
+  const [pipeline, setPipeline] = useState("all");
+  const [quality, setQuality] = useState("all");
+  const [trendStyle, setTrendStyle] = useState("area");
+  const [compareStyle, setCompareStyle] = useState("stacked");
+  const [distributionStyle, setDistributionStyle] = useState("donut");
+  const [rankMetric, setRankMetric] = useState("row_count");
+  const [scatterColorBy, setScatterColorBy] = useState("status");
+  const [matrixMetric, setMatrixMetric] = useState("quality");
 
   useEffect(() => {
     let mounted = true;
-
     const load = async () => {
       setIsLoading(true);
       try {
-        const response = await getUploadedData();
-        const rows = Array.isArray(response) ? response : Array.isArray(response?.data) ? response.data : [];
-        if (mounted) setUploadedRows(normalizeData(rows.length ? rows : FALLBACK_DATA));
+        const response = await getVisualizationData();
+        const data = Array.isArray(response?.data) ? response.data : Array.isArray(response) ? response : FALLBACK;
+        if (mounted) setRows(normalize(data.length ? data : FALLBACK));
       } catch {
-        if (mounted) setUploadedRows(normalizeData(FALLBACK_DATA));
+        if (mounted) setRows(normalize(FALLBACK));
       } finally {
         if (mounted) setIsLoading(false);
       }
     };
-
     load();
-    return () => {
-      mounted = false;
-    };
+    return () => { mounted = false; };
   }, []);
 
+  const sectorOptions = useMemo(() => ["all", ...new Set(rows.map((row) => row.sector_name).filter(Boolean))], [rows]);
+  const productOptions = useMemo(() => ["all", ...new Set(rows.map((row) => row.product_name).filter(Boolean))], [rows]);
+
+  const filtered = useMemo(() => rows.filter((row) => {
+    if (sector !== "all" && row.sector_name !== sector) return false;
+    if (product !== "all" && row.product_name !== product) return false;
+    if (pipeline === "cleaned" && !row.has_cleaned_data) return false;
+    if (pipeline === "pending" && row.has_cleaned_data) return false;
+    if (quality !== "all" && qualityBand(row.quality_score) !== quality) return false;
+    return true;
+  }), [pipeline, product, quality, rows, sector]);
+
   const data = useMemo(() => {
-    const totalRows = uploadedRows.reduce((sum, row) => sum + row.row_count, 0);
-    const cleanedRows = uploadedRows
-      .filter((row) => row.has_cleaned_data)
-      .reduce((sum, row) => sum + row.row_count, 0);
-    const avgQuality = uploadedRows.length
-      ? (uploadedRows.reduce((sum, row) => sum + row.quality_score, 0) / uploadedRows.length) * 100
-      : 0;
+    const totalRows = filtered.reduce((sum, row) => sum + row.row_count, 0);
+    const totalDatasets = filtered.length;
+    const avgQuality = totalDatasets ? Math.round((filtered.reduce((sum, row) => sum + row.quality_score, 0) / totalDatasets) * 100) : 0;
+    const cleanedCoverage = totalDatasets ? Math.round((filtered.filter((row) => row.has_cleaned_data).length / totalDatasets) * 100) : 0;
+    const trendMap = new Map();
+    const groupMap = new Map();
 
-    const sectorMap = new Map();
-    const monthMap = new Map();
+    filtered.forEach((row) => {
+      const key = bucket(row.time_reference, granularity);
+      const t = trendMap.get(key) || { bucket: key, row_count: 0, dataset_count: 0, qualityTotal: 0 };
+      t.row_count += row.row_count;
+      t.dataset_count += 1;
+      t.qualityTotal += row.quality_score * 100;
+      trendMap.set(key, t);
 
-    uploadedRows.forEach((row) => {
-      const sectorPrev = sectorMap.get(row.sector_name) || {
-        department: row.sector_name,
-        cleaned: 0,
-        pending: 0,
-        datasets: 0,
-        qualityTotal: 0,
-        points: [],
-      };
-      if (row.has_cleaned_data) sectorPrev.cleaned += row.row_count;
-      else sectorPrev.pending += row.row_count;
-      sectorPrev.datasets += 1;
-      sectorPrev.qualityTotal += row.quality_score * 100;
-      sectorPrev.points.push(row.row_count);
-      sectorMap.set(row.sector_name, sectorPrev);
-
-      const m = monthLabel(row.uploaded_at);
-      const monthPrev = monthMap.get(m) || { month: m, rows: 0, datasets: 0, quality: 0 };
-      monthPrev.rows += row.row_count;
-      monthPrev.datasets += 1;
-      monthPrev.quality += row.quality_score * 100;
-      monthMap.set(m, monthPrev);
+      const gk = groupBy === "status" ? row.status : row[groupBy] || "Unknown";
+      const g = groupMap.get(gk) || { name: gk, row_count: 0, dataset_count: 0, qualityTotal: 0, cleanedRows: 0, pendingRows: 0 };
+      g.row_count += row.row_count;
+      g.dataset_count += 1;
+      g.qualityTotal += row.quality_score * 100;
+      if (row.has_cleaned_data) g.cleanedRows += row.row_count; else g.pendingRows += row.row_count;
+      groupMap.set(gk, g);
     });
 
-    const departmentPerformance = Array.from(sectorMap.values()).map((s) => ({
-      department: s.department,
-      cleaned: s.cleaned,
-      pending: s.pending,
-      total: s.cleaned + s.pending,
-      quality: Math.round(s.qualityTotal / s.datasets),
-      datasets: s.datasets,
+    const trend = Array.from(trendMap.values()).map((item) => ({
+      ...item,
+      quality: item.dataset_count ? Math.round(item.qualityTotal / item.dataset_count) : 0,
+      metricValue: metric === "row_count" ? item.row_count : metric === "dataset_count" ? item.dataset_count : item.dataset_count ? Math.round(item.qualityTotal / item.dataset_count) : 0,
     }));
 
-    const topMetrics = [
-      { metric: "Quality Score", value: Math.round(avgQuality), target: 95 },
-      { metric: "Cleaned Coverage", value: Math.round((cleanedRows / Math.max(totalRows, 1)) * 100), target: 90 },
-      { metric: "Dataset Volume", value: Math.round((uploadedRows.length / 25) * 100), target: 100 },
-      { metric: "Pipeline Throughput", value: Math.min(100, Math.round((totalRows / 75000) * 100)), target: 85 },
-      { metric: "Consistency", value: Math.max(55, Math.min(99, Math.round(avgQuality + 6))), target: 92 },
-    ].sort((a, b) => b.value - a.value);
-
-    const targetVsAchievement = topMetrics.map((m) => ({
-      metric: m.metric,
-      target: m.target,
-      achievement: m.value,
-      remaining: Math.max(m.target - m.value, 0),
+    const groups = Array.from(groupMap.values()).map((item) => ({
+      ...item,
+      quality: item.dataset_count ? Math.round(item.qualityTotal / item.dataset_count) : 0,
     }));
 
-    const donutData = [
-      { name: "High (>=85%)", value: uploadedRows.filter((r) => r.quality_score * 100 >= 85).length },
-      { name: "Medium (70-84%)", value: uploadedRows.filter((r) => r.quality_score * 100 >= 70 && r.quality_score * 100 < 85).length },
-      { name: "Low (<70%)", value: uploadedRows.filter((r) => r.quality_score * 100 < 70).length },
+    const qualityMix = [
+      { name: "High", value: filtered.filter((row) => qualityBand(row.quality_score) === "High").length, fill: C.tertiary },
+      { name: "Medium", value: filtered.filter((row) => qualityBand(row.quality_score) === "Medium").length, fill: C.warning },
+      { name: "Low", value: filtered.filter((row) => qualityBand(row.quality_score) === "Low").length, fill: C.danger },
     ];
 
-    const multiLayeredBars = departmentPerformance.map((d) => ({
-      department: d.department,
-      rowsK: +(d.total / 1000).toFixed(1),
-      quality: d.quality,
-      loadIndex: Math.min(100, d.datasets * 20),
-    }));
+    const ranked = groups
+      .map((item, index) => ({
+        ...item,
+        metricValue: rankMetric === "row_count" ? item.row_count : rankMetric === "dataset_count" ? item.dataset_count : item.quality,
+        fill: palette(index),
+      }))
+      .sort((a, b) => b.metricValue - a.metricValue)
+      .slice(0, 6);
 
-    const trend = Array.from(monthMap.values()).map((m) => ({
-      month: m.month,
-      rowsK: +(m.rows / 1000).toFixed(1),
-      datasets: m.datasets,
-      quality: Math.round(m.quality / m.datasets),
-    }));
-
-    const scatter = uploadedRows.map((row) => ({
+    const scatter = filtered.map((row) => ({
       x: row.row_count,
       y: Math.round(row.quality_score * 100),
-      z: row.has_cleaned_data ? 12 : 8,
-      name: `DS-${row.id}`,
+      fill: scatterColorBy === "status" ? (row.status === "Cleaned" ? C.primary : C.danger) : scatterColorBy === "sector" ? palette(sectorOptions.indexOf(row.sector_name)) : palette(productOptions.indexOf(row.product_name)),
     }));
 
-    const boxPlot = Array.from(sectorMap.values()).map((s) => {
-      const sorted = [...s.points].sort((a, b) => a - b);
-      const min = sorted[0] || 0;
-      const q1 = quantile(sorted, 0.25);
-      const median = quantile(sorted, 0.5);
-      const q3 = quantile(sorted, 0.75);
-      const max = sorted[sorted.length - 1] || 0;
-      return {
-        category: s.department,
-        min: +(min / 1000).toFixed(1),
-        q1: +(q1 / 1000).toFixed(1),
-        median: +(median / 1000).toFixed(1),
-        q3: +(q3 / 1000).toFixed(1),
-        max: +(max / 1000).toFixed(1),
-        q1Base: +(q1 / 1000).toFixed(1),
-        iqr: +((q3 - q1) / 1000).toFixed(1),
-      };
-    });
-
-    const radarData = topMetrics.slice(0, 5).map((m) => ({
-      metric: m.metric.replace(" ", "\n"),
-      value: m.value,
-      target: m.target,
+    const buckets = Array.from(new Set(trend.map((item) => item.bucket)));
+    const products = Array.from(new Set(filtered.map((row) => row.product_name))).slice(0, 6);
+    const matrix = products.map((name) => ({
+      name,
+      cells: buckets.map((item) => {
+        const slice = filtered.filter((row) => row.product_name === name && bucket(row.time_reference, granularity) === item);
+        const value = matrixMetric === "quality"
+          ? Math.round((slice.reduce((sum, row) => sum + row.quality_score, 0) / Math.max(slice.length, 1)) * 100)
+          : slice.reduce((sum, row) => sum + row.row_count, 0);
+        return { item, value };
+      }),
     }));
+    const matrixMax = Math.max(1, ...matrix.flatMap((row) => row.cells.map((cell) => cell.value)));
 
-    const sectorNames = departmentPerformance.map((d) => d.department);
-    const statusNodes = ["Cleaned", "Pending"];
-    const nodes = [...sectorNames, ...statusNodes].map((name) => ({ name }));
-    const cleanedIndex = sectorNames.length;
-    const pendingIndex = sectorNames.length + 1;
-    const sankeyLinks = departmentPerformance.flatMap((d, idx) => [
-      { source: idx, target: cleanedIndex, value: Math.max(1, d.cleaned) },
-      { source: idx, target: pendingIndex, value: Math.max(1, d.pending) },
-    ]);
-
-    return {
-      summary: { totalRows, avgQuality: Math.round(avgQuality), totalDatasets: uploadedRows.length },
-      departmentPerformance,
-      topMetrics,
-      targetVsAchievement,
-      donutData,
-      multiLayeredBars,
-      trend,
-      scatter,
-      boxPlot,
-      radarData,
-      sankey: { nodes, links: sankeyLinks },
-    };
-  }, [uploadedRows]);
+    return { totalRows, totalDatasets, avgQuality, cleanedCoverage, trend, groups, qualityMix, ranked, scatter, matrix, buckets, matrixMax };
+  }, [filtered, granularity, groupBy, matrixMetric, metric, productOptions, rankMetric, scatterColorBy, sectorOptions]);
 
   if (isLoading) {
-    return (
-      <div className="flex min-h-[60vh] items-center justify-center">
-        <div className="flex items-center gap-2 text-clay-600 dark:text-slate-300">
-          <Loader2 className="h-5 w-5 animate-spin" />
-          Loading visualization data...
-        </div>
-      </div>
-    );
+    return <div className="flex min-h-[60vh] items-center justify-center text-theme-muted"><Loader2 className="mr-2 h-5 w-5 animate-spin" />Loading visualization data...</div>;
   }
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-clay-900 dark:text-slate-100">Visualizations</h1>
-        <p className="mt-1 text-clay-600 dark:text-slate-400">
-          Advanced analytics dashboard generated from uploaded datasets.
-        </p>
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <div className="bg-theme-card rounded-xl border border-theme-light p-4">
-          <p className="text-sm text-theme-muted">Total Datasets</p>
-          <p className="mt-1 text-2xl font-semibold text-theme-primary">{data.summary.totalDatasets}</p>
+      <section className="overflow-hidden rounded-[34px] border border-theme-light bg-theme-card shadow-theme">
+        <div className="relative px-6 py-7">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(20,184,166,0.18),transparent_34%),radial-gradient(circle_at_top_right,rgba(14,165,233,0.16),transparent_28%)]" />
+          <div className="relative flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
+            <div className="max-w-2xl">
+              <div className="inline-flex items-center gap-2 rounded-full border border-theme-light bg-theme-secondary px-3 py-1 text-xs font-semibold uppercase tracking-[0.22em] text-theme-secondary"><Sparkles className="h-3.5 w-3.5" />Chart Studio</div>
+              <h1 className="mt-4 text-3xl font-semibold text-theme-primary md:text-4xl">Customizable Modern Visualizations</h1>
+              <p className="mt-2 text-sm leading-6 text-theme-muted md:text-base">Global scope filters control the dataset set. Each chart below has its own display mode, so customization is not limited to simple filters.</p>
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:w-[560px]">
+              <SelectChip label="Scope By" value={groupBy} onChange={setGroupBy} options={GROUPS} />
+              <SelectChip label="Time Grain" value={granularity} onChange={setGranularity} options={GRAINS} />
+              <SelectChip label="Metric" value={metric} onChange={setMetric} options={METRICS} />
+              <div className="flex items-center gap-2 rounded-full border border-theme-light bg-theme-secondary px-3 py-2 text-xs font-semibold text-theme-muted"><SlidersHorizontal className="h-3.5 w-3.5" /><span>Studio controls active</span></div>
+            </div>
+          </div>
+          <div className="relative mt-5 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <SelectChip label="Sector" value={sector} onChange={setSector} options={sectorOptions} />
+            <SelectChip label="Product" value={product} onChange={setProduct} options={productOptions} />
+            <SelectChip label="Pipeline" value={pipeline} onChange={setPipeline} options={["all", "cleaned", "pending"]} />
+            <SelectChip label="Quality" value={quality} onChange={setQuality} options={["all", "High", "Medium", "Low"]} />
+          </div>
         </div>
-        <div className="bg-theme-card rounded-xl border border-theme-light p-4">
-          <p className="text-sm text-theme-muted">Total Rows</p>
-          <p className="mt-1 text-2xl font-semibold text-theme-primary">{data.summary.totalRows.toLocaleString()}</p>
-        </div>
-        <div className="bg-theme-card rounded-xl border border-theme-light p-4">
-          <p className="text-sm text-theme-muted">Average Quality</p>
-          <p className="mt-1 text-2xl font-semibold text-theme-primary">{data.summary.avgQuality}%</p>
-        </div>
+      </section>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <Stat label="Datasets In View" value={data.totalDatasets} hint="Current scoped workspace" icon={Layers3} />
+        <Stat label="Rows Aggregated" value={data.totalRows.toLocaleString()} hint="Volume under current scope" icon={BarChart3} />
+        <Stat label="Average Quality" value={`${data.avgQuality}%`} hint="Average quality in scope" icon={Sparkles} />
+        <Stat label="Cleaned Coverage" value={`${data.cleanedCoverage}%`} hint="Pipeline completion ratio" icon={Filter} />
       </div>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-        <ChartCard title="1. Stacked Bar Chart (Department Performance Comparison)">
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={data.departmentPerformance}>
-              <CartesianGrid stroke="rgba(148,163,184,0.2)" strokeDasharray="3 3" />
-              <XAxis dataKey="department" stroke="var(--text-muted)" />
-              <YAxis stroke="var(--text-muted)" />
-              <Tooltip />
-              <Legend />
-              <Bar dataKey="cleaned" stackId="rows" fill="#14b8a6" name="Cleaned Rows" />
-              <Bar dataKey="pending" stackId="rows" fill="#f59e0b" name="Pending Rows" />
-            </BarChart>
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.3fr_0.95fr]">
+        <Card title="Trend Explorer" subtitle="Change the chart style for the same monthly or quarterly series." action={<Tabs value={trendStyle} onChange={setTrendStyle} options={[{ value: "area", label: "Area" }, { value: "line", label: "Line" }, { value: "bar", label: "Bar" }]} />}>
+          <ResponsiveContainer width="100%" height={360}>
+            {trendStyle === "area" ? (
+              <AreaChart data={data.trend}>
+                <defs><linearGradient id="vf" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={C.primary} stopOpacity={0.42} /><stop offset="95%" stopColor={C.primary} stopOpacity={0.04} /></linearGradient></defs>
+                <CartesianGrid stroke="rgba(148,163,184,0.16)" vertical={false} />
+                <XAxis dataKey="bucket" stroke="var(--text-muted)" tickLine={false} axisLine={false} />
+                <YAxis stroke="var(--text-muted)" tickLine={false} axisLine={false} />
+                <Tooltip contentStyle={chartTooltip()} />
+                <Area type="monotone" dataKey="metricValue" stroke={C.primary} fill="url(#vf)" strokeWidth={3} />
+                <Line type="monotone" dataKey="quality" stroke={C.secondary} strokeWidth={2.2} dot={false} />
+              </AreaChart>
+            ) : trendStyle === "line" ? (
+              <LineChart data={data.trend}>
+                <CartesianGrid stroke="rgba(148,163,184,0.16)" vertical={false} />
+                <XAxis dataKey="bucket" stroke="var(--text-muted)" tickLine={false} axisLine={false} />
+                <YAxis stroke="var(--text-muted)" tickLine={false} axisLine={false} />
+                <Tooltip contentStyle={chartTooltip()} />
+                <Line type="monotone" dataKey="metricValue" stroke={C.primary} strokeWidth={3} dot={{ r: 3 }} />
+                <Line type="monotone" dataKey="quality" stroke={C.secondary} strokeWidth={2.2} dot={false} />
+              </LineChart>
+            ) : (
+              <BarChart data={data.trend}>
+                <CartesianGrid stroke="rgba(148,163,184,0.16)" vertical={false} />
+                <XAxis dataKey="bucket" stroke="var(--text-muted)" tickLine={false} axisLine={false} />
+                <YAxis stroke="var(--text-muted)" tickLine={false} axisLine={false} />
+                <Tooltip contentStyle={chartTooltip()} />
+                <Bar dataKey="metricValue" fill={C.primary} radius={[10, 10, 0, 0]} />
+                <Bar dataKey="quality" fill={C.secondary} radius={[10, 10, 0, 0]} />
+              </BarChart>
+            )}
           </ResponsiveContainer>
-        </ChartCard>
+        </Card>
 
-        <ChartCard title="2. Horizontal Bar Chart (Top Performing Metrics)">
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={data.topMetrics} layout="vertical" margin={{ left: 12 }}>
-              <CartesianGrid stroke="rgba(148,163,184,0.2)" strokeDasharray="3 3" />
-              <XAxis type="number" domain={[0, 100]} stroke="var(--text-muted)" />
-              <YAxis type="category" dataKey="metric" width={130} stroke="var(--text-muted)" />
-              <Tooltip />
-              <Bar dataKey="value" fill="#0ea5e9" radius={[0, 8, 8, 0]} />
-            </BarChart>
+        <Card title="Distribution Studio" subtitle="Toggle the quality distribution between donut and bars." action={<Tabs value={distributionStyle} onChange={setDistributionStyle} options={[{ value: "donut", label: "Donut" }, { value: "bars", label: "Bars" }]} />}>
+          <ResponsiveContainer width="100%" height={360}>
+            {distributionStyle === "donut" ? (
+              <PieChart>
+                <Pie data={data.qualityMix} dataKey="value" nameKey="name" innerRadius={74} outerRadius={122} paddingAngle={4}>
+                  {data.qualityMix.map((entry) => <Cell key={entry.name} fill={entry.fill} />)}
+                </Pie>
+                <Tooltip contentStyle={chartTooltip()} />
+              </PieChart>
+            ) : (
+              <BarChart data={data.qualityMix} layout="vertical" margin={{ left: 12 }}>
+                <CartesianGrid stroke="rgba(148,163,184,0.16)" horizontal={false} />
+                <XAxis type="number" stroke="var(--text-muted)" tickLine={false} axisLine={false} />
+                <YAxis dataKey="name" type="category" stroke="var(--text-muted)" tickLine={false} axisLine={false} />
+                <Tooltip contentStyle={chartTooltip()} />
+                <Bar dataKey="value" radius={[0, 10, 10, 0]}>{data.qualityMix.map((entry) => <Cell key={entry.name} fill={entry.fill} />)}</Bar>
+              </BarChart>
+            )}
           </ResponsiveContainer>
-        </ChartCard>
+        </Card>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-        <ChartCard title="3. Progress Chart (Target vs Achievement)">
-          <ResponsiveContainer width="100%" height={320}>
-            <BarChart data={data.targetVsAchievement} layout="vertical" margin={{ left: 10 }}>
-              <CartesianGrid stroke="rgba(148,163,184,0.2)" strokeDasharray="3 3" />
-              <XAxis type="number" domain={[0, 100]} stroke="var(--text-muted)" />
-              <YAxis type="category" dataKey="metric" width={130} stroke="var(--text-muted)" />
-              <Tooltip />
-              <Legend />
-              <Bar dataKey="achievement" stackId="a" fill="#22c55e" name="Achievement" />
-              <Bar dataKey="remaining" stackId="a" fill="#dbeafe" name="Gap To Target" />
-            </BarChart>
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.15fr_1.1fr]">
+        <Card title="Comparison Builder" subtitle="This chart has its own style mode separate from page filters." action={<Tabs value={compareStyle} onChange={setCompareStyle} options={[{ value: "stacked", label: "Stacked" }, { value: "quality", label: "Quality" }, { value: "mixed", label: "Mixed" }]} />}>
+          <ResponsiveContainer width="100%" height={360}>
+            {compareStyle === "stacked" ? (
+              <BarChart data={data.groups.slice(0, 8)}>
+                <CartesianGrid stroke="rgba(148,163,184,0.16)" vertical={false} />
+                <XAxis dataKey="name" stroke="var(--text-muted)" tickLine={false} axisLine={false} />
+                <YAxis stroke="var(--text-muted)" tickLine={false} axisLine={false} />
+                <Tooltip contentStyle={chartTooltip()} />
+                <Bar dataKey="cleanedRows" stackId="a" fill={C.primary} radius={[8, 8, 0, 0]} />
+                <Bar dataKey="pendingRows" stackId="a" fill={C.warning} radius={[8, 8, 0, 0]} />
+              </BarChart>
+            ) : compareStyle === "quality" ? (
+              <BarChart data={data.groups.slice(0, 8)} layout="vertical" margin={{ left: 18 }}>
+                <CartesianGrid stroke="rgba(148,163,184,0.16)" horizontal={false} />
+                <XAxis type="number" domain={[0, 100]} stroke="var(--text-muted)" tickLine={false} axisLine={false} />
+                <YAxis dataKey="name" width={120} type="category" stroke="var(--text-muted)" tickLine={false} axisLine={false} />
+                <Tooltip contentStyle={chartTooltip()} />
+                <Bar dataKey="quality" fill={C.secondary} radius={[0, 10, 10, 0]} />
+              </BarChart>
+            ) : (
+              <ComposedChart data={data.groups.slice(0, 8)}>
+                <CartesianGrid stroke="rgba(148,163,184,0.16)" vertical={false} />
+                <XAxis dataKey="name" stroke="var(--text-muted)" tickLine={false} axisLine={false} />
+                <YAxis yAxisId="left" stroke="var(--text-muted)" tickLine={false} axisLine={false} />
+                <YAxis yAxisId="right" orientation="right" domain={[0, 100]} stroke="var(--text-muted)" tickLine={false} axisLine={false} />
+                <Tooltip contentStyle={chartTooltip()} />
+                <Bar yAxisId="left" dataKey="row_count" fill={C.primary} radius={[8, 8, 0, 0]} />
+                <Line yAxisId="right" type="monotone" dataKey="quality" stroke={C.secondary} strokeWidth={2.4} />
+              </ComposedChart>
+            )}
           </ResponsiveContainer>
-        </ChartCard>
+        </Card>
 
-        <ChartCard title="4. Donut Chart (Category Distribution)">
-          <ResponsiveContainer width="100%" height={320}>
-            <PieChart>
-              <Pie data={data.donutData} dataKey="value" nameKey="name" innerRadius={70} outerRadius={110} paddingAngle={3} label>
-                {data.donutData.map((item, index) => (
-                  <Cell key={item.name} fill={COLORS[index % COLORS.length]} />
-                ))}
-              </Pie>
-              <Tooltip />
-            </PieChart>
-          </ResponsiveContainer>
-        </ChartCard>
-      </div>
-
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-        <ChartCard title="5. Multi-layered Bar Chart">
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={data.multiLayeredBars}>
-              <CartesianGrid stroke="rgba(148,163,184,0.2)" strokeDasharray="3 3" />
-              <XAxis dataKey="department" stroke="var(--text-muted)" />
-              <YAxis stroke="var(--text-muted)" />
-              <Tooltip />
-              <Legend />
-              <Bar dataKey="rowsK" fill="#14b8a6" name="Rows (K)" />
-              <Bar dataKey="quality" fill="#6366f1" name="Quality %" />
-              <Bar dataKey="loadIndex" fill="#f97316" name="Load Index" />
-            </BarChart>
-          </ResponsiveContainer>
-        </ChartCard>
-
-        <ChartCard title="6. Multi-line Trend Chart (Monthly Growth Comparison)">
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={data.trend}>
-              <CartesianGrid stroke="rgba(148,163,184,0.2)" strokeDasharray="3 3" />
-              <XAxis dataKey="month" stroke="var(--text-muted)" />
-              <YAxis stroke="var(--text-muted)" />
-              <Tooltip />
-              <Legend />
-              <Line type="monotone" dataKey="rowsK" stroke="#14b8a6" strokeWidth={2.5} name="Rows (K)" />
-              <Line type="monotone" dataKey="datasets" stroke="#0ea5e9" strokeWidth={2.5} name="Datasets" />
-              <Line type="monotone" dataKey="quality" stroke="#22c55e" strokeWidth={2.5} name="Quality %" />
-            </LineChart>
-          </ResponsiveContainer>
-        </ChartCard>
-      </div>
-
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-        <ChartCard title="7. Scatter Plot (Correlation Analysis)">
-          <ResponsiveContainer width="100%" height={300}>
-            <ScatterChart>
-              <CartesianGrid stroke="rgba(148,163,184,0.2)" strokeDasharray="3 3" />
-              <XAxis type="number" dataKey="x" name="Rows" unit="" stroke="var(--text-muted)" />
-              <YAxis type="number" dataKey="y" name="Quality" unit="%" stroke="var(--text-muted)" domain={[50, 100]} />
-              <Tooltip cursor={{ strokeDasharray: "3 3" }} />
-              <Scatter data={data.scatter} fill="#14b8a6" />
+        <Card title="Scatter Lab" subtitle="This graph can recolor by status, sector, or product." action={<SelectChip label="Color By" value={scatterColorBy} onChange={setScatterColorBy} options={[{ value: "status", label: "Status" }, { value: "sector", label: "Sector" }, { value: "product", label: "Product" }]} />}>
+          <ResponsiveContainer width="100%" height={360}>
+            <ScatterChart margin={{ left: 8, right: 8, top: 12, bottom: 4 }}>
+              <CartesianGrid stroke="rgba(148,163,184,0.16)" />
+              <XAxis type="number" dataKey="x" stroke="var(--text-muted)" tickLine={false} axisLine={false} />
+              <YAxis type="number" dataKey="y" domain={[50, 100]} stroke="var(--text-muted)" tickLine={false} axisLine={false} />
+              <Tooltip contentStyle={chartTooltip()} />
+              <Scatter data={data.scatter}>{data.scatter.map((point, index) => <Cell key={index} fill={point.fill} />)}</Scatter>
             </ScatterChart>
           </ResponsiveContainer>
-        </ChartCard>
-
-        <ChartCard title="8. Box Plot (Data Distribution Analysis)">
-          <ResponsiveContainer width="100%" height={300}>
-            <ComposedChart data={data.boxPlot}>
-              <CartesianGrid stroke="rgba(148,163,184,0.2)" strokeDasharray="3 3" />
-              <XAxis dataKey="category" stroke="var(--text-muted)" />
-              <YAxis stroke="var(--text-muted)" label={{ value: "Rows (K)", angle: -90, position: "insideLeft" }} />
-              <Tooltip />
-              <Bar dataKey="q1Base" stackId="box" fill="transparent" />
-              <Bar dataKey="iqr" stackId="box" fill="#60a5fa" name="IQR (Q1-Q3)" />
-              <Line type="monotone" dataKey="median" stroke="#0f766e" strokeWidth={2} name="Median" />
-              <Line type="monotone" dataKey="min" stroke="#94a3b8" strokeWidth={1.4} name="Min" />
-              <Line type="monotone" dataKey="max" stroke="#334155" strokeWidth={1.4} name="Max" />
-            </ComposedChart>
-          </ResponsiveContainer>
-        </ChartCard>
+        </Card>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-        <ChartCard title="9. Radar Chart (Performance Metrics)">
-          <ResponsiveContainer width="100%" height={320}>
-            <RadarChart data={data.radarData}>
-              <PolarGrid />
-              <PolarAngleAxis dataKey="metric" tick={{ fill: "var(--text-secondary)", fontSize: 12 }} />
-              <PolarRadiusAxis angle={90} domain={[0, 100]} tick={{ fill: "var(--text-muted)" }} />
-              <Radar name="Current" dataKey="value" stroke="#14b8a6" fill="#14b8a655" />
-              <Radar name="Target" dataKey="target" stroke="#0ea5e9" fill="#0ea5e933" />
-              <Legend />
-            </RadarChart>
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[0.95fr_1.25fr]">
+        <Card title="Top Performer Ranking" subtitle="Choose what the leaderboard ranks by." action={<SelectChip label="Rank By" value={rankMetric} onChange={setRankMetric} options={METRICS} />}>
+          <ResponsiveContainer width="100%" height={360}>
+            <BarChart data={data.ranked} layout="vertical" margin={{ left: 18 }}>
+              <CartesianGrid stroke="rgba(148,163,184,0.16)" horizontal={false} />
+              <XAxis type="number" stroke="var(--text-muted)" tickLine={false} axisLine={false} />
+              <YAxis dataKey="name" width={120} type="category" stroke="var(--text-muted)" tickLine={false} axisLine={false} />
+              <Tooltip contentStyle={chartTooltip()} />
+              <Bar dataKey="metricValue" radius={[0, 12, 12, 0]}>{data.ranked.map((entry) => <Cell key={entry.name} fill={entry.fill} />)}</Bar>
+            </BarChart>
           </ResponsiveContainer>
-        </ChartCard>
+        </Card>
 
-        <ChartCard title="10. Sankey Diagram (Data Flow Analysis)">
-          <ResponsiveContainer width="100%" height={320}>
-            <Sankey
-              data={data.sankey}
-              nodePadding={20}
-              margin={{ left: 10, right: 10, top: 10, bottom: 10 }}
-              node={{ stroke: "#1f2937", fill: "#14b8a6", opacity: 0.9 }}
-              link={{ stroke: "#0ea5e9", opacity: 0.35 }}
-            >
-              <Tooltip />
-            </Sankey>
-          </ResponsiveContainer>
-        </ChartCard>
+        <Card title="Product-Time Matrix" subtitle="A heatmap-style chart for product-wise monthly or quarterly intensity." action={<SelectChip label="Cell Metric" value={matrixMetric} onChange={setMatrixMetric} options={[{ value: "quality", label: "Quality" }, { value: "row_count", label: "Rows" }]} />}>
+          <div className="overflow-x-auto">
+            <div className="min-w-[620px]">
+              <div className="mb-3 grid gap-2" style={{ gridTemplateColumns: `180px repeat(${Math.max(data.buckets.length, 1)}, minmax(82px, 1fr))` }}>
+                <div className="px-3 text-xs font-semibold uppercase tracking-[0.18em] text-theme-muted">Product</div>
+                {data.buckets.map((item) => <div key={item} className="px-2 text-center text-xs font-semibold uppercase tracking-[0.12em] text-theme-muted">{item}</div>)}
+              </div>
+              <div className="space-y-2">
+                {data.matrix.map((row) => (
+                  <div key={row.name} className="grid gap-2" style={{ gridTemplateColumns: `180px repeat(${Math.max(data.buckets.length, 1)}, minmax(82px, 1fr))` }}>
+                    <div className="flex items-center rounded-2xl border border-theme-light bg-theme-secondary px-3 py-3 text-sm font-semibold text-theme-primary">{row.name}</div>
+                    {row.cells.map((cell, index) => {
+                      const intensity = Math.max(0.08, cell.value / data.matrixMax);
+                      const background = matrixMetric === "quality" ? `rgba(20, 184, 166, ${Math.min(0.9, intensity)})` : `rgba(14, 165, 233, ${Math.min(0.9, intensity)})`;
+                      return <div key={`${row.name}_${index}`} className="flex h-[58px] items-center justify-center rounded-2xl border border-theme-light text-sm font-semibold" style={{ background, color: intensity > 0.45 ? "#fff" : "var(--text-primary)" }}>{cell.value}</div>;
+                    })}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </Card>
       </div>
     </div>
   );

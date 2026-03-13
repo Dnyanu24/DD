@@ -2,6 +2,7 @@
 import { useNavigate, Link } from "react-router-dom";
 import { register } from "../services/api";
 import { Eye, EyeOff, User, Mail, Lock, Building, ArrowRight, CheckCircle } from "lucide-react";
+import BrandLogo from "../components/BrandLogo";
 
 export default function Signup() {
   const [formData, setFormData] = useState({
@@ -71,6 +72,9 @@ export default function Signup() {
   if (success) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-theme-primary transition-colors duration-300">
+        <div className="absolute left-4 top-4 z-10">
+          <BrandLogo />
+        </div>
         <div className="w-full max-w-md p-8 text-center bg-theme-card rounded-2xl shadow-theme border border-theme m-4">
           <div className="mx-auto w-16 h-16 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center mb-4">
             <CheckCircle className="w-8 h-8 text-green-600 dark:text-green-400" />
@@ -90,11 +94,15 @@ export default function Signup() {
         <div className="absolute -bottom-1/2 -left-1/2 w-full h-full bg-gradient-to-tr from-teal-200/20 to-transparent rounded-full blur-3xl" />
       </div>
 
+      <div className="absolute left-4 top-4 z-10">
+        <BrandLogo />
+      </div>
+
       <div className="relative w-full max-w-md p-8 space-y-6 bg-theme-card rounded-2xl shadow-theme border border-theme m-4">
         {/* Logo and Title */}
         <div className="text-center">
-          <div className="mx-auto w-16 h-16 rounded-2xl accent-primary flex items-center justify-center mb-4 shadow-lg">
-            <span className="text-3xl font-bold text-theme-inverse">S</span>
+          <div className="mb-4 flex justify-center">
+            <BrandLogo compact />
           </div>
           <h2 className="text-3xl font-bold text-theme-primary">
             Create Account

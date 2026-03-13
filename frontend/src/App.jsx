@@ -4,6 +4,7 @@ import { ThemeProvider } from "./context/ThemeContext";
 import Sidebar from "./components/Sidebar";
 import Header from "./components/Header";
 import ChatWidget from "./components/ChatWidget";
+import Welcome from "./pages/Welcome";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 import CEODashboard from "./pages/CEODashboard";
@@ -93,9 +94,10 @@ function AppLayout() {
 function PublicRoutes() {
   return (
     <Routes>
+      <Route path="/" element={<Welcome />} />
       <Route path="/login" element={<Login />} />
       <Route path="/signup" element={<Signup />} />
-      <Route path="*" element={<Navigate to="/login" replace />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }

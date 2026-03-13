@@ -14,6 +14,7 @@ import {
 import KPICard from "../components/KPICard";
 import AIInsights from "../components/AIInsights";
 import { createAnnouncement, getJoinRequests, reviewJoinRequest } from "../services/api";
+import { useAuth } from "../context/AuthContext";
 
 const defaultTrendData = [
   { month: "Jan", revenue: 120000 },
@@ -41,6 +42,8 @@ export default function CEODashboard({
   trendData = defaultTrendData,
   marketShareData = defaultMarketShareData,
 }) {
+  const { user } = useAuth();
+  const isCeoView = user?.role === "CEO";
   const [joinRequests, setJoinRequests] = useState([]);
   const [requestsLoading, setRequestsLoading] = useState(false);
   const [requestsError, setRequestsError] = useState("");
@@ -64,8 +67,9 @@ export default function CEODashboard({
   };
 
   useEffect(() => {
+    if (!isCeoView) return;
     loadJoinRequests();
-  }, []);
+  }, [isCeoView]);
 
   const handleReview = async (request, action) => {
     setReviewingId(request.id);
@@ -103,96 +107,100 @@ export default function CEODashboard({
 
   return (
     <div className="space-y-6">
-      <div className="bg-theme-card rounded-2xl p-6 shadow-lg transition-colors duration-300">
-        <h3 className="mb-4 text-lg font-semibold text-theme-primary">CEO Announcement</h3>
-        <div className="grid grid-cols-1 gap-3">
-          <input
-            value={announcementTitle}
-            onChange={(e) => setAnnouncementTitle(e.target.value)}
-            placeholder="Announcement title"
-            className="rounded-lg border border-theme-light bg-theme-secondary px-3 py-2 text-sm text-theme-primary"
-          />
-          <textarea
-            value={announcementMessage}
-            onChange={(e) => setAnnouncementMessage(e.target.value)}
-            placeholder="Announcement message to all company roles..."
-            rows={3}
-            className="rounded-lg border border-theme-light bg-theme-secondary px-3 py-2 text-sm text-theme-primary"
-          />
-          <button
-            type="button"
-            onClick={handlePostAnnouncement}
-            disabled={postingAnnouncement}
-            className="w-fit rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60"
-          >
-            {postingAnnouncement ? "Posting..." : "Post Announcement"}
-          </button>
-        </div>
-      </div>
-
-      <div className="bg-theme-card rounded-2xl p-6 shadow-lg transition-colors duration-300">
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <h3 className="text-lg font-semibold text-theme-primary">Company Join Requests</h3>
-          <button
-            type="button"
-            onClick={loadJoinRequests}
-            className="rounded-lg border border-theme-light bg-theme-secondary px-3 py-1.5 text-xs text-theme-primary"
-          >
-            Refresh
-          </button>
-        </div>
-        {requestsError ? <p className="mb-3 text-sm text-red-600">{requestsError}</p> : null}
-        {requestsLoading ? (
-          <p className="text-sm text-theme-muted">Loading requests...</p>
-        ) : pendingRequests.length === 0 ? (
-          <p className="text-sm text-theme-muted">No pending requests.</p>
-        ) : (
-          <div className="space-y-3">
-            {pendingRequests.map((request) => (
-              <div key={request.id} className="rounded-xl border border-theme-light bg-theme-secondary p-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold text-theme-primary">{request.username}</p>
-                    <p className="text-xs text-theme-muted">
-                      Role: {request.requested_role} | Company ID: {request.company_id}
-                    </p>
-                  </div>
-                  {request.requested_role_key === "sector_head" ? (
-                    <input
-                      type="number"
-                      min="1"
-                      placeholder="Sector ID"
-                      value={sectorSelections[request.id] || ""}
-                      onChange={(event) =>
-                        setSectorSelections((prev) => ({ ...prev, [request.id]: event.target.value }))
-                      }
-                      className="w-28 rounded-lg border border-theme-light bg-theme-primary px-2 py-1 text-sm text-theme-primary"
-                    />
-                  ) : null}
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      disabled={reviewingId === request.id}
-                      onClick={() => handleReview(request, "approve")}
-                      className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
-                    >
-                      Approve
-                    </button>
-                    <button
-                      type="button"
-                      disabled={reviewingId === request.id}
-                      onClick={() => handleReview(request, "reject")}
-                      className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
-                    >
-                      Reject
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))}
+      {isCeoView ? (
+        <div className="space-y-6">
+          <div className="bg-theme-card rounded-2xl p-6 shadow-lg transition-colors duration-300">
+            <h3 className="mb-4 text-lg font-semibold text-theme-primary">CEO Announcement</h3>
+            <div className="grid grid-cols-1 gap-3">
+              <input
+                value={announcementTitle}
+                onChange={(e) => setAnnouncementTitle(e.target.value)}
+                placeholder="Announcement title"
+                className="rounded-lg border border-theme-light bg-theme-secondary px-3 py-2 text-sm text-theme-primary"
+              />
+              <textarea
+                value={announcementMessage}
+                onChange={(e) => setAnnouncementMessage(e.target.value)}
+                placeholder="Announcement message to all company roles..."
+                rows={3}
+                className="rounded-lg border border-theme-light bg-theme-secondary px-3 py-2 text-sm text-theme-primary"
+              />
+              <button
+                type="button"
+                onClick={handlePostAnnouncement}
+                disabled={postingAnnouncement}
+                className="w-fit rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60"
+              >
+                {postingAnnouncement ? "Posting..." : "Post Announcement"}
+              </button>
+            </div>
           </div>
-        )}
-      </div>
+
+          <div className="bg-theme-card rounded-2xl p-6 shadow-lg transition-colors duration-300">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <h3 className="text-lg font-semibold text-theme-primary">Company Join Requests</h3>
+              <button
+                type="button"
+                onClick={loadJoinRequests}
+                className="rounded-lg border border-theme-light bg-theme-secondary px-3 py-1.5 text-xs text-theme-primary"
+              >
+                Refresh
+              </button>
+            </div>
+            {requestsError ? <p className="mb-3 text-sm text-red-600">{requestsError}</p> : null}
+            {requestsLoading ? (
+              <p className="text-sm text-theme-muted">Loading requests...</p>
+            ) : pendingRequests.length === 0 ? (
+              <p className="text-sm text-theme-muted">No pending requests.</p>
+            ) : (
+              <div className="space-y-3">
+                {pendingRequests.map((request) => (
+                  <div key={request.id} className="rounded-xl border border-theme-light bg-theme-secondary p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-theme-primary">{request.username}</p>
+                        <p className="text-xs text-theme-muted">
+                          Role: {request.requested_role} | Company ID: {request.company_id}
+                        </p>
+                      </div>
+                      {request.requested_role_key === "sector_head" ? (
+                        <input
+                          type="number"
+                          min="1"
+                          placeholder="Sector ID"
+                          value={sectorSelections[request.id] || ""}
+                          onChange={(event) =>
+                            setSectorSelections((prev) => ({ ...prev, [request.id]: event.target.value }))
+                          }
+                          className="w-28 rounded-lg border border-theme-light bg-theme-primary px-2 py-1 text-sm text-theme-primary"
+                        />
+                      ) : null}
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          disabled={reviewingId === request.id}
+                          onClick={() => handleReview(request, "approve")}
+                          className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+                        >
+                          Approve
+                        </button>
+                        <button
+                          type="button"
+                          disabled={reviewingId === request.id}
+                          onClick={() => handleReview(request, "reject")}
+                          className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
         <KPICard title="Total Revenue" value="$1.2M" change="+12.5%" changeType="positive" />

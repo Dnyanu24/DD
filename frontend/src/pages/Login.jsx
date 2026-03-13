@@ -2,6 +2,7 @@
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { Eye, EyeOff, User, Lock, ArrowRight } from "lucide-react";
+import BrandLogo from "../components/BrandLogo";
 
 export default function Login() {
   const [username, setUsername] = useState("");
@@ -41,11 +42,15 @@ export default function Login() {
         <div className="absolute -bottom-1/2 -left-1/2 w-full h-full bg-gradient-to-tr from-teal-200/20 to-transparent rounded-full blur-3xl" />
       </div>
 
+      <div className="absolute left-4 top-4 z-10">
+        <BrandLogo />
+      </div>
+
       <div className="relative w-full max-w-md p-8 space-y-6 bg-theme-card rounded-2xl shadow-theme border border-theme m-4">
         {/* Logo and Title */}
         <div className="text-center">
-          <div className="mx-auto w-16 h-16 rounded-2xl accent-primary flex items-center justify-center mb-4 shadow-lg">
-            <span className="text-3xl font-bold text-white">S</span>
+          <div className="mb-4 flex justify-center">
+            <BrandLogo compact />
           </div>
           <h2 className="text-3xl font-bold text-theme-primary">
             SDAS

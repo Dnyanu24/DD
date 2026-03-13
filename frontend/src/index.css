@@ -25,9 +25,9 @@
   --accent-hover: #0F766E;
   
   /* Border Colors */
-  --border-light: #E2E8F0;
-  --border-medium: #CBD5E1;
-  --border-dark: #94A3B8;
+  --border-light: #EDF2F7;
+  --border-medium: #E2E8F0;
+  --border-dark: #CBD5E1;
   
   /* Status Colors */
   --success: #22c55e;
@@ -36,9 +36,9 @@
   --info: #3b82f6;
   
   /* Shadows */
-  --shadow-sm: 0 1px 2px 0 rgba(15, 23, 42, 0.05);
-  --shadow-md: 0 4px 6px -1px rgba(15, 23, 42, 0.1);
-  --shadow-lg: 0 10px 15px -3px rgba(15, 23, 42, 0.1);
+  --shadow-sm: 0 1px 2px 0 rgba(15, 23, 42, 0.03);
+  --shadow-md: 0 8px 20px -16px rgba(15, 23, 42, 0.12);
+  --shadow-lg: 0 18px 36px -28px rgba(15, 23, 42, 0.14);
 }
 
 /* Dark Mode - Dark with Blue-Green accents */
@@ -115,6 +115,11 @@ html:not(.dark) body {
 
 .shadow-theme { box-shadow: var(--shadow-lg); }
 .shadow-theme-md { box-shadow: var(--shadow-md); }
+
+html:not(.dark) .bg-theme-card {
+  border-color: var(--border-light);
+  box-shadow: var(--shadow-lg);
+}
 
 /* Smooth transitions for theme changes */
 * {
