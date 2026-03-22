@@ -37,7 +37,7 @@ class DataCleaningEngine:
         return score
 
     # 1. Missing Value Imputation
-    def impute_missing_values(self, df: pd.DataFrame, strategy: str = 'auto') -> pd.DataFrame:
+    def impute_missing_values(self, df: pd.DataFrame, strategy: str = 'auto', knn_k: int = 5) -> pd.DataFrame:
         df_clean = df.copy()
         numeric_cols = df.select_dtypes(include=[np.number]).columns
         categorical_cols = df.select_dtypes(include=['object']).columns
@@ -49,7 +49,9 @@ class DataCleaningEngine:
             imputer = SimpleImputer(strategy='median')
             df_clean[numeric_cols] = imputer.fit_transform(df_clean[numeric_cols])
         elif strategy == 'ml' or strategy == 'auto':
-            imputer = KNNImputer(n_neighbors=5)
+            safe_k = int(knn_k) if knn_k is not None else 5
+            safe_k = max(2, min(25, safe_k))
+            imputer = KNNImputer(n_neighbors=safe_k)
             df_clean[numeric_cols] = imputer.fit_transform(df_clean[numeric_cols])
 
         # For categorical, use most frequent
@@ -60,6 +62,7 @@ class DataCleaningEngine:
         score = self.calculate_quality_score(df, df_clean, 'missing_value_imputation')
         self.log_action('missing_value_imputation', {
             'strategy': strategy,
+            'knn_k': knn_k,
             'columns_affected': len(numeric_cols) + len(categorical_cols),
             'quality_score': score
         })
@@ -81,6 +84,13 @@ class DataCleaningEngine:
     def detect_outliers(self, df: pd.DataFrame, method: str = 'iqr') -> pd.DataFrame:
         df_clean = df.copy()
         numeric_cols = df.select_dtypes(include=[np.number]).columns
+        # Never treat identifier columns as outliers (keeps IDs stable).
+        id_like = {
+            c
+            for c in numeric_cols
+            if str(c).strip().lower() == "id" or str(c).strip().lower().endswith("_id")
+        }
+        numeric_cols = [c for c in numeric_cols if c not in id_like]
 
         for col in numeric_cols:
             if method == 'zscore':
@@ -107,26 +117,21 @@ class DataCleaningEngine:
 
     # 4. Data Type Correction
     def correct_data_types(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Safer type correction.
+
+        IMPORTANT: We do NOT blindly convert all columns to datetime (avoids 1970-01-01 bugs).
+        """
+        from app.services.schema_detector import apply_type_corrections, detect_schema
+
         df_clean = df.copy()
-
-        for col in df_clean.columns:
-            # Try to convert to numeric
-            try:
-                pd.to_numeric(df_clean[col])
-                df_clean[col] = pd.to_numeric(df_clean[col])
-            except:
-                pass
-
-            # Try to convert to datetime
-            try:
-                pd.to_datetime(df_clean[col])
-                df_clean[col] = pd.to_datetime(df_clean[col])
-            except:
-                pass
+        schema = detect_schema(df_clean)
+        df_clean, applied = apply_type_corrections(df_clean, schema)
 
         score = self.calculate_quality_score(df, df_clean, 'data_type_correction')
         self.log_action('data_type_correction', {
             'columns_processed': len(df_clean.columns),
+            'actions': applied[:20],
             'quality_score': score
         })
         return df_clean
@@ -135,6 +140,12 @@ class DataCleaningEngine:
     def normalize_data(self, df: pd.DataFrame) -> pd.DataFrame:
         df_clean = df.copy()
         numeric_cols = df.select_dtypes(include=[np.number]).columns
+        id_like = {
+            c
+            for c in numeric_cols
+            if str(c).strip().lower() == "id" or str(c).strip().lower().endswith("_id")
+        }
+        numeric_cols = [c for c in numeric_cols if c not in id_like]
         if len(numeric_cols) == 0:
             self.log_action('normalization', {
                 'method': 'min_max',
@@ -159,6 +170,12 @@ class DataCleaningEngine:
     def standardize_data(self, df: pd.DataFrame) -> pd.DataFrame:
         df_clean = df.copy()
         numeric_cols = df.select_dtypes(include=[np.number]).columns
+        id_like = {
+            c
+            for c in numeric_cols
+            if str(c).strip().lower() == "id" or str(c).strip().lower().endswith("_id")
+        }
+        numeric_cols = [c for c in numeric_cols if c not in id_like]
         if len(numeric_cols) == 0:
             self.log_action('standardization', {
                 'method': 'z_score',
@@ -183,6 +200,12 @@ class DataCleaningEngine:
     def reduce_noise(self, df: pd.DataFrame, window: int = 5) -> pd.DataFrame:
         df_clean = df.copy()
         numeric_cols = df.select_dtypes(include=[np.number]).columns
+        id_like = {
+            c
+            for c in numeric_cols
+            if str(c).strip().lower() == "id" or str(c).strip().lower().endswith("_id")
+        }
+        numeric_cols = [c for c in numeric_cols if c not in id_like]
 
         for col in numeric_cols:
             df_clean[col] = df_clean[col].rolling(window=window, center=True).mean()
@@ -274,10 +297,12 @@ class DataCleaningEngine:
         if config is None:
             config = {
                 'impute_strategy': 'auto',
+                'knn_k': 5,
                 'outlier_method': 'iqr',
-                'normalize': True,
+                # Preserve original units by default.
+                'normalize': False,
                 'standardize': False,
-                'reduce_noise': True,
+                'reduce_noise': False,
                 'clean_text': True,
                 'rules': {},
                 'reference_data': {}
@@ -287,7 +312,11 @@ class DataCleaningEngine:
 
         # Run all algorithms in sequence
         df_clean = self.remove_duplicates(df_clean)
-        df_clean = self.impute_missing_values(df_clean, config.get('impute_strategy', 'auto'))
+        df_clean = self.impute_missing_values(
+            df_clean,
+            config.get('impute_strategy', 'auto'),
+            config.get('knn_k', 5),
+        )
         df_clean = self.detect_outliers(df_clean, config.get('outlier_method', 'iqr'))
         df_clean = self.correct_data_types(df_clean)
 

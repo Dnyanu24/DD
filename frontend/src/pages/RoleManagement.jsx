@@ -1,187 +1,340 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { CheckCircle2, Loader2, RefreshCcw, Shield, User as UserIcon, XCircle } from "lucide-react";
 import KPICard from "../components/KPICard";
+import { getCompanyUsers, getJoinRequests, getSectors, reviewJoinRequest, updateCompanyUser, getApiBaseUrl } from "../services/api";
+
+const ROLE_OPTIONS = [
+  { value: "CEO", label: "CEO" },
+  { value: "Admin", label: "Admin" },
+  { value: "Sector Head", label: "Sector Head" },
+  { value: "Data Analyst", label: "Data Analyst" },
+  { value: "Sales Manager", label: "Sales Manager" },
+  { value: "Student", label: "Student" },
+  { value: "Individual", label: "Individual" },
+];
+
+function formatTime(iso) {
+  if (!iso) return "-";
+  try {
+    return new Date(iso).toLocaleString();
+  } catch {
+    return "-";
+  }
+}
 
 export default function RoleManagement() {
-  const [selectedRole, setSelectedRole] = useState("ceo");
+  const [loading, setLoading] = useState(true);
+  const [savingUserId, setSavingUserId] = useState(null);
+  const [reviewingRequestId, setReviewingRequestId] = useState(null);
+  const [error, setError] = useState("");
 
-  const roles = [
-    {
-      id: "ceo",
-      name: "CEO / Owner",
-      description: "Full access to company-wide dashboards and AI recommendations",
-      permissions: ["View all sectors", "Access AI insights", "Monitor company performance", "Approve decisions"],
-      users: 2,
-      status: "Active"
-    },
-    {
-      id: "sector_head",
-      name: "Sector Head",
-      description: "Manage sector-specific data and view sector-level predictions",
-      permissions: ["Upload sector data", "View sector analytics", "Provide feedback", "Access sector predictions"],
-      users: 8,
-      status: "Active"
-    },
-    {
-      id: "data_analyst",
-      name: "Data Analyst",
-      description: "Access data cleaning tools and detailed analytics",
-      permissions: ["Run data cleaning", "View detailed reports", "Configure AI models", "Access visualizations"],
-      users: 5,
-      status: "Active"
-    },
+  const [users, setUsers] = useState([]);
+  const [requests, setRequests] = useState([]);
+  const [sectors, setSectors] = useState([]);
 
-  ];
+  const [userDrafts, setUserDrafts] = useState({});
+  const [requestSector, setRequestSector] = useState({});
 
-  const userMetrics = [
-    { title: "Total Users", value: "16", change: "+2" },
-    { title: "Active Sessions", value: "12", change: "+3" },
-    { title: "Role Changes", value: "5", change: "+1" },
-    { title: "Permission Updates", value: "8", change: "+2" },
-  ];
+  const sectorOptions = useMemo(() => {
+    const rows = Array.isArray(sectors) ? sectors : [];
+    return rows.map((s) => ({ value: String(s.id), label: s.name || `Sector ${s.id}` }));
+  }, [sectors]);
 
-  const recentUsers = [
-    { name: "John Smith", role: "Sector Head", sector: "Technology", status: "Active", lastLogin: "2 hours ago" },
-    { name: "Sarah Johnson", role: "Data Analyst", sector: "Finance", status: "Active", lastLogin: "1 day ago" },
-    { name: "Mike Davis", role: "CEO", sector: "Executive", status: "Active", lastLogin: "30 min ago" },
-    { name: "Lisa Chen", role: "Sector Head", sector: "Healthcare", status: "Inactive", lastLogin: "1 week ago" },
-  ];
+  const load = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const [usersRows, joinRows, sectorRows] = await Promise.all([
+        getCompanyUsers().catch(() => []),
+        getJoinRequests().catch(() => []),
+        getSectors().catch(() => []),
+      ]);
+      setUsers(Array.isArray(usersRows) ? usersRows : []);
+      setRequests(Array.isArray(joinRows) ? joinRows : []);
+      setSectors(Array.isArray(sectorRows) ? sectorRows : []);
+      setUserDrafts({});
+      setRequestSector({});
+    } catch (err) {
+      setError(err?.message || "Failed to load role management data");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const metrics = useMemo(() => {
+    const totalUsers = users.length;
+    const activeRoles = new Set(users.map((u) => u.role)).size;
+    const pendingRequests = requests.filter((r) => r.status === "pending").length;
+    const sectorHeads = users.filter((u) => u.role === "Sector Head").length;
+    return [
+      { title: "Total Users", value: String(totalUsers), change: `${activeRoles} roles` },
+      { title: "Pending Requests", value: String(pendingRequests), change: "Join approvals" },
+      { title: "Sector Heads", value: String(sectorHeads), change: "Assigned owners" },
+      { title: "Active Roles", value: String(activeRoles), change: "Across company" },
+    ];
+  }, [requests, users]);
+
+  const pendingRequests = useMemo(() => requests.filter((r) => r.status === "pending"), [requests]);
+
+  const getUserDraft = (userId) => userDrafts[String(userId)] || null;
+
+  const updateUserDraft = (userId, patch) => {
+    const key = String(userId);
+    setUserDrafts((prev) => ({
+      ...prev,
+      [key]: { ...(prev[key] || {}), ...patch },
+    }));
+  };
+
+  const handleSaveUser = async (userId) => {
+    const draft = getUserDraft(userId);
+    if (!draft) return;
+    setSavingUserId(userId);
+    setError("");
+    try {
+      const payload = {
+        role: draft.role,
+        sector_id: draft.role === "Sector Head" ? (draft.sector_id ? Number(draft.sector_id) : null) : null,
+      };
+      const updated = await updateCompanyUser(userId, payload);
+      setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, ...updated } : u)));
+      setUserDrafts((prev) => {
+        const next = { ...prev };
+        delete next[String(userId)];
+        return next;
+      });
+    } catch (err) {
+      setError(err?.message || "Failed to update user");
+    } finally {
+      setSavingUserId(null);
+    }
+  };
+
+  const handleReview = async (requestId, action) => {
+    setReviewingRequestId(requestId);
+    setError("");
+    try {
+      const req = requests.find((r) => r.id === requestId);
+      const needsSector = req?.requested_role_key === "sector_head";
+      const sectorId = needsSector ? (requestSector[String(requestId)] ? Number(requestSector[String(requestId)]) : null) : null;
+      await reviewJoinRequest(requestId, action, sectorId);
+      await load();
+    } catch (err) {
+      setError(err?.message || "Failed to review join request");
+    } finally {
+      setReviewingRequestId(null);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center text-theme-muted">
+        <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+        Loading role management...
+      </div>
+    );
+  }
+
+  const apiBase = getApiBaseUrl();
 
   return (
-    <div className="p-6">
-      <h1 className="text-3xl font-bold mb-4">Role Management</h1>
-      <p className="text-gray-400 mb-6">Manage user roles, permissions, and access control</p>
+    <div className="space-y-6">
+      <div className="rounded-2xl border border-theme-light bg-theme-card p-6 shadow-theme">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="text-3xl font-bold text-theme-primary">Role Management</h1>
+            <p className="mt-1 text-theme-muted">Approve join requests, assign roles, and manage sector ownership.</p>
+          </div>
+          <button
+            type="button"
+            onClick={load}
+            className="inline-flex items-center gap-2 rounded-xl border border-theme-light bg-theme-secondary px-4 py-2 text-sm font-semibold text-theme-primary hover:bg-theme-tertiary"
+          >
+            <RefreshCcw className="h-4 w-4" />
+            Refresh
+          </button>
+        </div>
+      </div>
 
-      {/* User Metrics */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        {userMetrics.map((metric, index) => (
-          <KPICard
-            key={index}
-            title={metric.title}
-            value={metric.value}
-            change={metric.change}
-            changeType="positive"
-          />
+      {error ? (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/25 dark:text-red-300">
+          {error}
+        </div>
+      ) : null}
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {metrics.map((metric) => (
+          <KPICard key={metric.title} title={metric.title} value={metric.value} change={metric.change} changeType="neutral" />
         ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Roles List */}
-        <div className="bg-gray-800 p-6 rounded-lg shadow-lg border border-gray-700">
-          <h3 className="text-lg font-semibold text-white mb-4">User Roles</h3>
-          <div className="space-y-3">
-            {roles.map((role) => (
-              <div
-                key={role.id}
-                onClick={() => setSelectedRole(role.id)}
-                className={`p-4 rounded-lg cursor-pointer transition-colors ${
-                  selectedRole === role.id
-                    ? "bg-blue-600 text-white"
-                    : "bg-gray-700 text-gray-300 hover:bg-gray-600"
-                }`}
-              >
-                <div className="flex justify-between items-start mb-2">
-                  <h4 className="font-medium">{role.name}</h4>
-                  <span className="px-2 py-1 rounded text-xs bg-green-600">
-                    {role.users} users
-                  </span>
-                </div>
-                <p className="text-sm opacity-80 mb-2">{role.description}</p>
-                <div className="text-xs opacity-60">
-                  Status: {role.status}
-                </div>
-              </div>
-            ))}
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.2fr_0.8fr]">
+        <section className="rounded-2xl border border-theme-light bg-theme-card p-6 shadow-theme">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Shield className="h-5 w-5 text-theme-primary" />
+              <h2 className="text-lg font-semibold text-theme-primary">Company Users</h2>
+            </div>
+            <p className="text-xs text-theme-muted">{users.length} users</p>
           </div>
-        </div>
 
-        {/* Role Details */}
-        <div className="bg-gray-800 p-6 rounded-lg shadow-lg border border-gray-700">
-          <h3 className="text-lg font-semibold text-white mb-4">Role Details</h3>
-          {selectedRole && (
-            <div className="space-y-4">
-              {(() => {
-                const role = roles.find(r => r.id === selectedRole);
-                return (
-                  <>
-                    <div>
-                      <h4 className="font-medium text-white mb-2">{role.name}</h4>
-                      <p className="text-gray-300 text-sm mb-4">{role.description}</p>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="bg-gray-700 p-3 rounded">
-                        <div className="text-xs text-gray-400">Users</div>
-                        <div className="text-lg font-bold text-white">{role.users}</div>
-                      </div>
-                      <div className="bg-gray-700 p-3 rounded">
-                        <div className="text-xs text-gray-400">Status</div>
-                        <div className="text-lg font-bold text-green-400">{role.status}</div>
-                      </div>
-                    </div>
-
-                    <div className="bg-gray-700 p-4 rounded">
-                      <h5 className="text-white font-medium mb-2">Permissions</h5>
-                      <div className="space-y-2">
-                        {role.permissions.map((permission, index) => (
-                          <div key={index} className="flex items-center text-sm">
-                            <div className="w-2 h-2 bg-blue-400 rounded-full mr-3"></div>
-                            <span className="text-gray-300">{permission}</span>
+          <div className="mt-5 overflow-x-auto">
+            <table className="min-w-[860px] w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs font-semibold uppercase tracking-[0.14em] text-theme-muted">
+                  <th className="px-3 py-2">User</th>
+                  <th className="px-3 py-2">Role</th>
+                  <th className="px-3 py-2">Sector</th>
+                  <th className="px-3 py-2">Created</th>
+                  <th className="px-3 py-2">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.map((u) => {
+                  const draft = getUserDraft(u.id);
+                  const roleValue = draft?.role ?? u.role;
+                  const sectorValue = draft?.sector_id ?? (u.sector_id != null ? String(u.sector_id) : "");
+                  const dirty = Boolean(draft);
+                  const avatar = u.avatar_filename ? `${apiBase}/api/auth/profile/avatar/${encodeURIComponent(u.avatar_filename)}` : null;
+                  return (
+                    <tr key={u.id} className="border-t border-theme-light">
+                      <td className="px-3 py-3">
+                        <div className="flex items-center gap-3">
+                          <div className="h-9 w-9 overflow-hidden rounded-full border border-theme-light bg-theme-secondary">
+                            {avatar ? <img src={avatar} alt="avatar" className="h-full w-full object-cover" /> : <div className="flex h-full w-full items-center justify-center text-theme-muted"><UserIcon className="h-4 w-4" /></div>}
                           </div>
-                        ))}
+                          <div>
+                            <p className="font-semibold text-theme-primary">{u.display_name || u.username}</p>
+                            <p className="text-xs text-theme-muted">{u.username}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-3 py-3">
+                        <select
+                          value={roleValue}
+                          onChange={(e) => {
+                            const nextRole = e.target.value;
+                            updateUserDraft(u.id, { role: nextRole, sector_id: nextRole === "Sector Head" ? sectorValue : "" });
+                          }}
+                          className="w-full rounded-lg border border-theme-light bg-theme-secondary px-3 py-2 text-theme-primary"
+                        >
+                          {ROLE_OPTIONS.map((opt) => (
+                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="px-3 py-3">
+                        <select
+                          value={roleValue === "Sector Head" ? (sectorValue || "") : ""}
+                          onChange={(e) => updateUserDraft(u.id, { sector_id: e.target.value })}
+                          disabled={roleValue !== "Sector Head"}
+                          className="w-full rounded-lg border border-theme-light bg-theme-secondary px-3 py-2 text-theme-primary disabled:opacity-50"
+                        >
+                          <option value="">Select sector</option>
+                          {sectorOptions.map((opt) => (
+                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="px-3 py-3 text-theme-muted">{formatTime(u.created_at)}</td>
+                      <td className="px-3 py-3">
+                        <button
+                          type="button"
+                          onClick={() => handleSaveUser(u.id)}
+                          disabled={!dirty || savingUserId === u.id || (roleValue === "Sector Head" && !sectorValue)}
+                          className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold text-theme-inverse accent-primary hover:accent-hover disabled:opacity-60"
+                        >
+                          {savingUserId === u.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                          {savingUserId === u.id ? "Saving..." : "Save"}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-theme-light bg-theme-card p-6 shadow-theme">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-theme-primary">Join Requests</h2>
+              <p className="mt-1 text-sm text-theme-muted">Approve or reject pending registrations.</p>
+            </div>
+            <div className="rounded-full border border-theme-light bg-theme-secondary px-3 py-1 text-xs font-semibold text-theme-muted">
+              Pending {pendingRequests.length}
+            </div>
+          </div>
+
+          <div className="mt-5 space-y-3">
+            {pendingRequests.length === 0 ? (
+              <div className="rounded-xl border border-theme-light bg-theme-secondary p-4 text-sm text-theme-muted">
+                No pending join requests.
+              </div>
+            ) : (
+              pendingRequests.slice(0, 20).map((req) => {
+                const needsSector = req.requested_role_key === "sector_head";
+                const chosenSector = requestSector[String(req.id)] || "";
+                const disabledApprove = reviewingRequestId === req.id || (needsSector && !chosenSector);
+                return (
+                  <div key={req.id} className="rounded-xl border border-theme-light bg-theme-secondary p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-semibold text-theme-primary">{req.username}</p>
+                        <p className="mt-1 text-xs text-theme-muted">
+                          Requested {req.requested_role} • {formatTime(req.created_at)}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleReview(req.id, "approve")}
+                          disabled={disabledApprove}
+                          className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold text-theme-inverse accent-primary hover:accent-hover disabled:opacity-60"
+                        >
+                          {reviewingRequestId === req.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                          Approve
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleReview(req.id, "reject")}
+                          disabled={reviewingRequestId === req.id}
+                          className="inline-flex items-center gap-2 rounded-lg border border-theme-light bg-white px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-60 dark:bg-slate-950 dark:hover:bg-rose-900/20"
+                        >
+                          <XCircle className="h-4 w-4" />
+                          Reject
+                        </button>
                       </div>
                     </div>
 
-                    <div className="flex space-x-2">
-                      <button className="flex-1 bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg transition-colors">
-                        Edit Permissions
-                      </button>
-                      <button className="flex-1 bg-gray-600 hover:bg-gray-500 px-4 py-2 rounded-lg transition-colors">
-                        Manage Users
-                      </button>
-                    </div>
-                  </>
+                    {needsSector ? (
+                      <div className="mt-3">
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-[0.14em] text-theme-muted">Assign sector</label>
+                        <select
+                          value={chosenSector}
+                          onChange={(e) => setRequestSector((prev) => ({ ...prev, [String(req.id)]: e.target.value }))}
+                          className="w-full rounded-lg border border-theme-light bg-white px-3 py-2 text-sm text-theme-primary dark:bg-slate-950"
+                        >
+                          <option value="">Select sector</option>
+                          {sectorOptions.map((opt) => (
+                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    ) : null}
+                  </div>
                 );
-              })()}
-            </div>
-          )}
-        </div>
-
-        {/* Recent Users */}
-        <div className="bg-gray-800 p-6 rounded-lg shadow-lg border border-gray-700">
-          <h3 className="text-lg font-semibold text-white mb-4">Recent Users</h3>
-          <div className="space-y-3 mb-6">
-            {recentUsers.map((user, index) => (
-              <div key={index} className="bg-gray-700 p-3 rounded">
-                <div className="flex justify-between items-start mb-1">
-                  <div className="text-sm text-white font-medium">{user.name}</div>
-                  <span className={`px-2 py-1 rounded text-xs ${
-                    user.status === "Active" ? "bg-green-600" : "bg-gray-600"
-                  }`}>
-                    {user.status}
-                  </span>
-                </div>
-                <div className="text-xs text-gray-400 mb-1">{user.role} • {user.sector}</div>
-                <div className="text-xs text-gray-500">Last login: {user.lastLogin}</div>
-              </div>
-            ))}
+              })
+            )}
           </div>
-
-          <div className="pt-4 border-t border-gray-600">
-            <h4 className="text-white font-medium mb-3">Quick Actions</h4>
-            <div className="space-y-2">
-              <button className="w-full bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm text-gray-300 transition-colors">
-                Add New User
-              </button>
-              <button className="w-full bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm text-gray-300 transition-colors">
-                Bulk Role Update
-              </button>
-              <button className="w-full bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm text-gray-300 transition-colors">
-                Export User List
-              </button>
-            </div>
-          </div>
-        </div>
+        </section>
       </div>
     </div>
   );
 }
+

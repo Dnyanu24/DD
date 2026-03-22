@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Scatter } from "recharts";
 import KPICard from "../components/KPICard";
+import { getRoleInsights } from "../services/api";
 
 // Default data - can be overridden by props or API
 const defaultDataQualityData = [
@@ -62,6 +63,31 @@ export default function DataAnalystDashboard({
   sampleData = defaultSampleData
 }) {
   const [selectedModel, setSelectedModel] = useState("Random Forest");
+  const [insights, setInsights] = useState(null);
+  const [insightsError, setInsightsError] = useState("");
+  const [insightsLoading, setInsightsLoading] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      setInsightsLoading(true);
+      setInsightsError("");
+      try {
+        const data = await getRoleInsights();
+        if (!alive) return;
+        setInsights(data);
+      } catch (e) {
+        if (!alive) return;
+        setInsightsError(e?.message || "Failed to load personalized insights");
+      } finally {
+        if (alive) setInsightsLoading(false);
+      }
+    };
+    load();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   // Check if data is empty
   const hasDataQualityData = dataQualityData && dataQualityData.length > 0;
@@ -74,11 +100,31 @@ export default function DataAnalystDashboard({
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <KPICard title="Total Records Processed" value="1,247,583" change="+15.2%" changeType="positive" />
-        <KPICard title="Missing Values Detected" value="23,456" change="-8.3%" changeType="positive" />
-        <KPICard title="Outliers Identified" value="1,892" change="+5.7%" changeType="negative" />
-        <KPICard title="Data Quality Score" value="92.4%" change="+2.1%" changeType="positive" />
+        {Array.isArray(insights?.kpis) && insights.kpis.length ? (
+          insights.kpis.slice(0, 4).map((kpi) => (
+            <KPICard
+              key={kpi.title}
+              title={kpi.title}
+              value={kpi.unit ? `${kpi.value}${kpi.unit}` : String(kpi.value ?? "-")}
+              change=""
+              changeType="positive"
+            />
+          ))
+        ) : (
+          <>
+            <KPICard title="Total Records Processed" value={insightsLoading ? "..." : "1,247,583"} change="+15.2%" changeType="positive" />
+            <KPICard title="Missing Values Detected" value={insightsLoading ? "..." : "23,456"} change="-8.3%" changeType="positive" />
+            <KPICard title="Outliers Identified" value={insightsLoading ? "..." : "1,892"} change="+5.7%" changeType="negative" />
+            <KPICard title="Data Quality Score" value={insightsLoading ? "..." : "92.4%"} change="+2.1%" changeType="positive" />
+          </>
+        )}
       </div>
+
+      {insightsError ? (
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          {insightsError}
+        </div>
+      ) : null}
 
       {/* Charts Row 1 */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -246,6 +292,31 @@ export default function DataAnalystDashboard({
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Personalized Correlations */}
+      <div className="bg-theme-card p-6 rounded-2xl shadow-lg transition-colors duration-300">
+        <h3 className="text-lg font-semibold text-theme-primary mb-4">Personalized Correlations (Role Insights)</h3>
+        {Array.isArray(insights?.statistics?.top_correlations) && insights.statistics.top_correlations.length ? (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {insights.statistics.top_correlations.slice(0, 8).map((row, idx) => (
+              <div
+                key={`${row.feature_a}-${row.feature_b}-${idx}`}
+                className="rounded-xl border border-theme-light bg-theme-secondary p-4"
+              >
+                <p className="text-sm font-semibold text-theme-primary">
+                  {row.feature_a} vs {row.feature_b}
+                </p>
+                <p className="mt-1 text-xs text-theme-muted">r = {row.r}</p>
+                <p className="text-xs text-theme-muted">p-value = {row.p_value}</p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-theme-muted">
+            {insightsLoading ? "Loading correlations..." : "Not enough numeric data to compute correlations."}
+          </p>
+        )}
       </div>
 
       {/* Data Table */}

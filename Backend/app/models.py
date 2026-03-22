@@ -181,6 +181,82 @@ class UserSetting(Base):
     settings = Column(JSON, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow)
 
+
+class SavedCleanedDataset(Base):
+    __tablename__ = "saved_cleaned_datasets"
+    id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(Integer, ForeignKey("companies.id"), nullable=False)
+    created_by = Column(Integer, ForeignKey("users_roles.id"), nullable=False)
+    source_cleaned_data_id = Column(Integer, ForeignKey("cleaned_data.id"), nullable=True)
+    filename = Column(String(255), nullable=True)
+    columns = Column(JSON, nullable=False, default=list)
+    row_count = Column(Integer, nullable=False, default=0)
+    data = Column(JSON, nullable=False)  # Preview rows stored for later visualization
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class UserProfile(Base):
+    __tablename__ = "user_profiles"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users_roles.id"), unique=True, nullable=False)
+    display_name = Column(String(255), nullable=True)
+    email = Column(String(255), nullable=True)
+    bio = Column(Text, nullable=True)
+    avatar_filename = Column(String(255), nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users_roles.id"), nullable=False)
+    token_hash = Column(String(128), nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False)
+    used_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class PipelineIterationLog(Base):
+    __tablename__ = "pipeline_iteration_logs"
+    id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(Integer, ForeignKey("companies.id"), nullable=False)
+    sector_id = Column(Integer, ForeignKey("sectors.id"), nullable=True)
+    task = Column(String(64), nullable=False)  # e.g. risk_prediction
+    run_key = Column(String(128), nullable=False)  # groups related iterations
+    iteration = Column(Integer, nullable=False, default=0)
+    status = Column(String(32), nullable=False, default="completed")  # completed | stopped | error
+    metrics = Column(JSON, nullable=False, default=dict)
+    previous_metrics = Column(JSON, nullable=True)
+    dataset_stats = Column(JSON, nullable=False, default=dict)
+    cleaning_config = Column(JSON, nullable=False, default=dict)
+    root_cause = Column(JSON, nullable=False, default=dict)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class MetaLearningExperience(Base):
+    """
+    Stores dataset metadata/embedding and the best-performing pipeline/model config discovered for it.
+
+    This acts as a lightweight "config store" knowledge base:
+      (dataset_features/embedding) -> best_config (+ best_model + metrics)
+    """
+
+    __tablename__ = "meta_learning_experiences"
+    id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(Integer, ForeignKey("companies.id"), nullable=False)
+    sector_id = Column(Integer, ForeignKey("sectors.id"), nullable=True)
+
+    dataset_features = Column(JSON, nullable=False, default=dict)
+    embedding = Column(JSON, nullable=False, default=list)  # list[float]
+
+    best_config = Column(JSON, nullable=False, default=dict)
+    best_model = Column(JSON, nullable=False, default=dict)
+    best_metrics = Column(JSON, nullable=False, default=dict)
+
+    source_cleaned_data_id = Column(Integer, ForeignKey("cleaned_data.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
 # Partitioning for RawData by sector and time
 partition_by_sector_time = DDL("""
 CREATE TABLE IF NOT EXISTS raw_data_y2023 PARTITION OF raw_data
@@ -194,4 +270,29 @@ Index('idx_sector_time', RawData.sector_id, RawData.uploaded_at)
 Index('idx_cleaned_raw', CleanedData.raw_data_id)
 Index('idx_prediction_sector', AIPrediction.sector_id)
 Index('idx_feedback_user', FeedbackLog.user_id)
-Index('idx_quality_cleaned', DataQualityScore.cleaned_data_id )                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        )
+Index('idx_quality_cleaned', DataQualityScore.cleaned_data_id)
+Index('idx_saved_cleaned_company', SavedCleanedDataset.company_id, SavedCleanedDataset.created_at)
+Index('idx_profile_user', UserProfile.user_id)
+Index('idx_pwreset_user', PasswordResetToken.user_id, PasswordResetToken.created_at)
+Index('idx_pipeline_iter', PipelineIterationLog.company_id, PipelineIterationLog.task, PipelineIterationLog.created_at)
+Index('idx_meta_exp_company', MetaLearningExperience.company_id, MetaLearningExperience.created_at)
+Index('idx_meta_exp_sector', MetaLearningExperience.company_id, MetaLearningExperience.sector_id, MetaLearningExperience.created_at)
+
+
+class SectorClassificationProfile(Base):
+    """
+    Meta-learning store for sector classification patterns (keywords learned per company/sector).
+    """
+
+    __tablename__ = "sector_classification_profiles"
+    id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(Integer, ForeignKey("companies.id"), nullable=False)
+    sector = Column(String(64), nullable=False)
+    keywords = Column(JSON, nullable=False, default=list)  # list[str]
+    samples = Column(Integer, nullable=False, default=0)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+Index('idx_sector_profile_company', SectorClassificationProfile.company_id, SectorClassificationProfile.updated_at)
+Index('idx_sector_profile_unique', SectorClassificationProfile.company_id, SectorClassificationProfile.sector)

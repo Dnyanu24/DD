@@ -204,7 +204,7 @@ export default function DataUpload() {
             <label className="mb-1 block text-sm font-medium text-theme-secondary">Data File</label>
             <input
               type="file"
-              accept=".csv,.xlsx,.xls,.json"
+              accept=".csv,.xlsx,.xls,.json,.txt,.tsv,.log,.pdf"
               onChange={(event) => setSelectedFile(event.target.files?.[0] || null)}
               className="w-full rounded-lg border border-theme-light bg-theme-secondary px-3 py-2 text-theme-primary"
             />

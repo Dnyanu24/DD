@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, R
 from fastapi.responses import StreamingResponse, Response
 from sqlalchemy.orm import Session
 from typing import Dict, Any, Optional, Callable, List
+from pydantic import BaseModel
 import pandas as pd
 import numpy as np
 import json
@@ -12,15 +13,27 @@ from datetime import datetime
 import re
 
 from app.database import SessionLocal
-from app.models import RawData, CleanedData, AIPrediction, AIRecommendation, DataQualityScore, Sector, Product, FeedbackLog
+from app.models import RawData, CleanedData, AIPrediction, AIRecommendation, DataQualityScore, Sector, Product, FeedbackLog, SavedCleanedDataset, PipelineIterationLog
 from app.services.data_cleaning import DataCleaningEngine
 from app.services.ai_predictions import AIPredictionEngine
 from app.services.feedback_learning import FeedbackLearningEngine
+from app.services.file_ingest import load_dataframe_from_uploadfile
+from app.services.pipeline_controller import run_intelligent_pipeline
+from app.services.sector_classifier import SectorClassifier
+from app.services.root_cause_analyzer import RootCauseAnalyzer
+from app.services.meta_learner import MetaLearner
 from app.dependencies import get_current_user, require_sector_head
 from app.models import User
 
 
 router = APIRouter()
+
+
+class SaveCleanedDatasetRequest(BaseModel):
+    source_cleaned_data_id: Optional[int] = None
+    filename: Optional[str] = None
+    columns: Optional[List[str]] = None
+    rows: List[Dict[str, Any]]
 
 def get_db():
     db = SessionLocal()
@@ -247,12 +260,9 @@ def _allowed_sector_ids(db: Session, current_user: User) -> List[int]:
 
 
 def _allowed_uploader_ids(db: Session, current_user: User) -> List[int]:
-    return [
-        row[0] for row in db.query(User.id).filter(
-            User.company_id == current_user.company_id,
-            User.role == current_user.role
-        ).all()
-    ]
+    # Allow access to datasets uploaded by any user in the same company.
+    # Sector scoping is still enforced via `_allowed_sector_ids` and raw_data.sector_id filters.
+    return [row[0] for row in db.query(User.id).filter(User.company_id == current_user.company_id).all()]
 
 
 def _get_accessible_raw_data(db: Session, data_id: int, current_user: User) -> Optional[RawData]:
@@ -270,15 +280,12 @@ def _get_accessible_raw_data(db: Session, data_id: int, current_user: User) -> O
 
 
 def _load_dataframe_from_upload(file: UploadFile) -> pd.DataFrame:
-    filename = (file.filename or "").lower()
-    if filename.endswith(".csv"):
-        return pd.read_csv(file.file)
-    if filename.endswith(".xlsx") or filename.endswith(".xls"):
-        return pd.read_excel(file.file)
-    if filename.endswith(".json"):
-        data = json.load(file.file)
-        return pd.DataFrame(data)
-    raise HTTPException(status_code=400, detail="Unsupported file format")
+    try:
+        return load_dataframe_from_uploadfile(file)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Unsupported file format")
 
 def _derive_learning_strategy(db: Session, df: pd.DataFrame, predictive_fill: bool = False) -> Dict[str, Any]:
     learning_engine = FeedbackLearningEngine()
@@ -330,6 +337,12 @@ def _derive_learning_strategy(db: Session, df: pd.DataFrame, predictive_fill: bo
 
     if predictive_fill:
         config["impute_strategy"] = "ml"
+
+    # IMPORTANT: Cleaning output should preserve original units by default.
+    # Scaling/smoothing is for modeling, not for "cleaned dataset" export/visualization.
+    config["normalize"] = False
+    config["standardize"] = False
+    config["reduce_noise"] = False
 
     return {
         "config": config,
@@ -384,12 +397,17 @@ def _get_algorithm_steps(engine: DataCleaningEngine, algorithm: str, config: Dic
         "full_pipeline": [
             {"id": "clustering_profile", "label": "Clustering feature groups", "stage": "ml", "technique": "k-means feature grouping for structure detection", "operation": lambda df: df},
             {"id": "remove_duplicates", "label": "Removing duplicate rows", "stage": "cleaning", "technique": "exact/fuzzy dedup", "operation": engine.remove_duplicates},
-            {"id": "missing_values", "label": "Imputing missing values", "stage": "ml", "technique": f"{impute_strategy} imputation", "operation": lambda df: engine.impute_missing_values(df, impute_strategy)},
+            # IMPORTANT: Keep raw numeric units and enable "self-learning" imputation selection downstream.
+            # We defer missing-value imputation to `run_intelligent_pipeline`, which can evaluate multiple
+            # imputers per column (mean/median/KNN/regression) and pick the best via validation.
+            {"id": "missing_values", "label": "Deferring missing value imputation to self-learning pipeline", "stage": "ml", "technique": "parallel imputation selection", "operation": lambda df: df},
             {"id": "outliers", "label": "Detecting outliers", "stage": "ml", "technique": f"{outlier_method} outlier filtering", "operation": lambda df: engine.detect_outliers(df, outlier_method)},
             {"id": "data_types", "label": "Correcting data types", "stage": "cleaning", "technique": "schema correction", "operation": engine.correct_data_types},
-            {"id": "normalize", "label": "Normalizing numeric columns", "stage": "ml", "technique": "scaler transforms", "operation": engine.normalize_data if config.get("normalize", False) else (lambda df: df)},
-            {"id": "standardize", "label": "Standardizing numeric columns", "stage": "ml", "technique": "z-score standardization", "operation": engine.standardize_data if config.get("standardize", False) else (lambda df: df)},
-            {"id": "noise_reduction", "label": "Reducing signal noise", "stage": "ml", "technique": "rolling window smoothing", "operation": engine.reduce_noise if config.get("reduce_noise", False) else (lambda df: df)},
+            # IMPORTANT: For "cleaned dataset" exports/visualizations we preserve original units.
+            # Scaling/smoothing can be done separately for modeling, but should not alter cleaned CSV values.
+            {"id": "normalize", "label": "Preserving numeric units (normalization skipped)", "stage": "ml", "technique": "no-op", "operation": lambda df: df},
+            {"id": "standardize", "label": "Preserving numeric units (standardization skipped)", "stage": "ml", "technique": "no-op", "operation": lambda df: df},
+            {"id": "noise_reduction", "label": "Preserving numeric units (noise reduction skipped)", "stage": "ml", "technique": "no-op", "operation": lambda df: df},
             {"id": "text_cleaning", "label": "Cleaning text fields", "stage": "nlp", "technique": "text normalization", "operation": engine.clean_text if config.get("clean_text", False) else (lambda df: df)},
         ],
     }
@@ -773,6 +791,21 @@ async def clean_data(
         for step in steps:
             df_clean = step["operation"](df_clean)
         structured_df = _structure_dataframe(df_clean)
+
+        # Intelligent unstructured -> structured conversion + validation layer.
+        intelligent = run_intelligent_pipeline(
+            structured_df,
+            db=db,
+            company_id=current_user.company_id,
+            sector_id=raw_data.sector_id,
+            role=current_user.role,
+            config=strategy_config,
+        )
+        structured_df = intelligent.df
+
+        # Auto sector classification (adds `sector`, `sector_confidence`, `sector_source`).
+        classifier = SectorClassifier(db, company_id=current_user.company_id)
+        structured_df, sector_report = classifier.classify(structured_df)
         improvement = _compute_cleaning_improvement(source_df, structured_df)
 
         persist_result = _persist_cleaned_variants(
@@ -784,6 +817,87 @@ async def clean_data(
         )
         _persist_predictive_fill_audit(db, current_user, data_id, algorithm, audit_warning)
 
+        # Self-learning: store what worked for this dataset so future clean runs can warm-start.
+        # This captures the selected imputation methods (parallel imputation) and basic quality metrics.
+        try:
+            best_methods = {}
+            for item in intelligent.logs:
+                if isinstance(item, dict) and item.get("stage") == "parallel_imputation":
+                    best_methods = dict(item.get("best_method_by_column") or {})
+                    break
+
+            best_config = dict(intelligent.config_used or {})
+            if best_methods:
+                best_config["best_method_by_column"] = best_methods
+
+            validation_stats = {}
+            validation_warnings = []
+            for item in intelligent.logs:
+                if isinstance(item, dict) and item.get("stage") == "validation":
+                    validation_stats = dict(item.get("stats") or {})
+                    validation_warnings = list(item.get("warnings") or [])
+                    break
+
+            best_metrics = {
+                "cleaned_percent": improvement.get("cleaned_percent"),
+                "missing_after_percent": improvement.get("missing_after_percent"),
+                "validation_stats": validation_stats,
+                "warnings_count": len(intelligent.warnings or []) + len(validation_warnings),
+            }
+
+            MetaLearner(db).record_experience(
+                company_id=current_user.company_id,
+                sector_id=raw_data.sector_id,
+                df=source_df,
+                best_config=best_config,
+                best_model={"model_type": "data_cleaning", "params": {}},
+                best_metrics=best_metrics,
+                source_cleaned_data_id=int(persist_result.get("primary_cleaned_data_id") or 0) or None,
+            )
+        except Exception:
+            pass
+
+        # Iteration logs (SQLite) for visibility and future optimization.
+        try:
+            analyzer = RootCauseAnalyzer()
+            rc = analyzer.analyze(
+                source_df,
+                structured_df,
+                metrics={"cleaned_percent": improvement.get("cleaned_percent"), "missing_after_percent": improvement.get("missing_after_percent")},
+                previous_metrics=None,
+                cleaning_config=strategy_config,
+            )
+            run_key = f"data_cleaning:{current_user.company_id}:{raw_data.sector_id or 'all'}:{data_id}:{datetime.utcnow().strftime('%Y%m%dT%H%M%S')}"
+            entry = PipelineIterationLog(
+                company_id=int(current_user.company_id),
+                sector_id=int(raw_data.sector_id) if raw_data.sector_id is not None else None,
+                task="data_cleaning",
+                run_key=run_key,
+                iteration=0,
+                status="completed",
+                metrics={
+                    "cleaned_percent": improvement.get("cleaned_percent"),
+                    "missing_before_percent": improvement.get("missing_before_percent"),
+                    "missing_after_percent": improvement.get("missing_after_percent"),
+                    "duplicates_before": improvement.get("duplicates_before"),
+                    "duplicates_after": improvement.get("duplicates_after"),
+                    "quality_score": persist_result.get("quality_score"),
+                },
+                previous_metrics=None,
+                dataset_stats=rc.dataset_stats,
+                cleaning_config=dict(best_config if "best_config" in locals() else strategy_config),
+                root_cause={
+                    "root_causes": rc.root_causes,
+                    "recommended_config_updates": rc.recommended_config_updates,
+                },
+                notes="Auto-logged cleaning run (self-learning enabled via parallel imputation selection).",
+                created_at=datetime.utcnow(),
+            )
+            db.add(entry)
+            db.commit()
+        except Exception:
+            db.rollback()
+
         return {
             "message": "Data cleaning completed",
             "data_id": data_id,
@@ -793,10 +907,18 @@ async def clean_data(
             "row_count": len(structured_df),
             "column_count": len(structured_df.columns),
             "adaptive_config": strategy_config,
+            "schema": intelligent.schema,
+            "pipeline_summary": intelligent.summary,
+            "pipeline_warnings": intelligent.warnings,
+            "sector_classification": {
+                "sector_counts": sector_report.sector_counts,
+                "uncertain_rows": sector_report.uncertain_rows,
+                "used_model": sector_report.used_model,
+            },
             "learning_feedback": learning["history"],
             "cleaning_summary": improvement,
             "quality_scores": cleaning_engine.get_quality_scores(),
-            "logs": cleaning_engine.get_logs(),
+            "logs": cleaning_engine.get_logs() + intelligent.logs,
             **persist_result,
         }
     except Exception as e:
@@ -1241,6 +1363,101 @@ async def delete_cleaned_history(
 
     db.commit()
     return {"message": "Cleaned history deleted", "deleted_count": deleted_count}
+
+
+@router.get("/cleaned-datasets/{cleaned_data_id}")
+async def get_cleaned_dataset_preview(
+    cleaned_data_id: int,
+    limit: int = 2000,
+    offset: int = 0,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return a preview of a single cleaned dataset for visualization."""
+    limit = max(1, min(int(limit), 10000))
+    offset = max(0, int(offset))
+
+    sector_ids = _allowed_sector_ids(db, current_user)
+    uploader_ids = _allowed_uploader_ids(db, current_user)
+    if not sector_ids or not uploader_ids:
+        raise HTTPException(status_code=404, detail="Cleaned dataset not found")
+
+    row = db.query(CleanedData, RawData)\
+        .join(RawData, CleanedData.raw_data_id == RawData.id)\
+        .filter(
+            CleanedData.id == cleaned_data_id,
+            RawData.sector_id.in_(sector_ids),
+            RawData.uploaded_by.in_(uploader_ids),
+        )\
+        .first()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Cleaned dataset not found")
+
+    cleaned, raw = row
+    records = cleaned.cleaned_data if isinstance(cleaned.cleaned_data, list) else []
+    preview = records[offset:offset + limit]
+    columns = list(preview[0].keys()) if preview and isinstance(preview[0], dict) else []
+    algo = cleaned.cleaning_algorithm or "unknown"
+    sector_label = "all"
+    if "__sector__" in algo:
+        sector_label = algo.split("__sector__", 1)[1]
+
+    return {
+        "cleaned_data_id": cleaned.id,
+        "raw_data_id": raw.id,
+        "algorithm": algo,
+        "sector_label": sector_label,
+        "quality_score": cleaned.quality_score,
+        "cleaned_at": cleaned.cleaned_at.isoformat() if cleaned.cleaned_at else None,
+        "row_count": len(records),
+        "column_count": len(columns),
+        "columns": columns,
+        "preview_offset": offset,
+        "preview_limit": limit,
+        "preview_row_count": len(preview),
+        "rows": preview,
+    }
+
+
+@router.post("/saved-cleaned-datasets")
+async def save_cleaned_dataset(
+    payload: SaveCleanedDatasetRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Persist a cleaned dataset preview (from downloaded file) into the database."""
+    rows = payload.rows if isinstance(payload.rows, list) else []
+    if not rows:
+        raise HTTPException(status_code=400, detail="No rows provided")
+    if len(rows) > 5000:
+        rows = rows[:5000]
+
+    inferred_columns: List[str] = []
+    if payload.columns and isinstance(payload.columns, list):
+        inferred_columns = [str(col) for col in payload.columns][:250]
+    elif rows and isinstance(rows[0], dict):
+        inferred_columns = [str(col) for col in rows[0].keys()][:250]
+
+    saved = SavedCleanedDataset(
+        company_id=current_user.company_id,
+        created_by=current_user.id,
+        source_cleaned_data_id=payload.source_cleaned_data_id,
+        filename=(payload.filename or None),
+        columns=inferred_columns,
+        row_count=len(rows),
+        data=rows,
+    )
+    db.add(saved)
+    db.commit()
+    db.refresh(saved)
+
+    return {
+        "message": "Saved cleaned dataset",
+        "saved_id": saved.id,
+        "row_count": saved.row_count,
+        "column_count": len(inferred_columns),
+    }
 
 
 @router.get("/clean-compare/{data_id}")

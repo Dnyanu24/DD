@@ -26,7 +26,11 @@ export default function Signup() {
     { value: "data_analyst", label: "Data Analyst" },
     { value: "sales_manager", label: "Sales Manager" },
     { value: "sector_head", label: "Sector Head" },
+    { value: "student", label: "Student" },
+    { value: "individual", label: "Individual" },
   ];
+
+  const needsCompanyId = !["student", "individual"].includes(formData.role);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -52,7 +56,7 @@ export default function Signup() {
         username: formData.username,
         password: formData.password,
         role: formData.role,
-        company_id: formData.company_id,
+        company_id: needsCompanyId ? formData.company_id : "",
       });
       
       if (result) {
@@ -234,24 +238,26 @@ export default function Signup() {
           </div>
 
           {/* Company ID */}
-          <div>
-            <label htmlFor="company_id" className="block text-sm font-medium text-theme-secondary mb-1">
-              Company ID (Format: company_01)
-            </label>
-            <div className="relative">
-              <Building className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-theme-muted" />
-              <input
-                id="company_id"
-                name="company_id"
-                type="text"
-                required
-                value={formData.company_id}
-                onChange={handleChange}
-                className="block w-full pl-10 pr-4 py-3 bg-theme-secondary border border-theme-light rounded-lg text-theme-primary placeholder-theme-muted focus:outline-none focus:ring-2 focus:ring-accent-primary focus:border-transparent transition-all"
-                placeholder="company_01"
-              />
+          {needsCompanyId ? (
+            <div>
+              <label htmlFor="company_id" className="block text-sm font-medium text-theme-secondary mb-1">
+                Company ID (Format: company_01)
+              </label>
+              <div className="relative">
+                <Building className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-theme-muted" />
+                <input
+                  id="company_id"
+                  name="company_id"
+                  type="text"
+                  required
+                  value={formData.company_id}
+                  onChange={handleChange}
+                  className="block w-full pl-10 pr-4 py-3 bg-theme-secondary border border-theme-light rounded-lg text-theme-primary placeholder-theme-muted focus:outline-none focus:ring-2 focus:ring-accent-primary focus:border-transparent transition-all"
+                  placeholder="company_01"
+                />
+              </div>
             </div>
-          </div>
+          ) : null}
 
           {/* Terms Checkbox */}
           <div className="flex items-center">

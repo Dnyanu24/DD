@@ -10,6 +10,7 @@ from datetime import datetime
 from app.database import SessionLocal
 from app.models import RawData, CleanedData, DataQualityScore, Sector, Product, User
 from app.dependencies import get_current_user
+from app.services.file_ingest import load_dataframe_from_uploadfile
 
 router = APIRouter()
 
@@ -69,8 +70,9 @@ def _sanitize_json_payload(value):
         return [_sanitize_json_payload(v) for v in value.tolist()]
     return value
 
-def _adaptive_upload_config(db: Session, df: pd.DataFrame) -> dict:
+def _adaptive_upload_config(db: Session, df: pd.DataFrame, *, company_id: int, sector_id: int) -> dict:
     from app.services.feedback_learning import FeedbackLearningEngine
+    from app.services.meta_learner import MetaLearner
     learning_engine = FeedbackLearningEngine()
 
     numeric_cols = df.select_dtypes(include=[np.number]).columns
@@ -95,6 +97,17 @@ def _adaptive_upload_config(db: Session, df: pd.DataFrame) -> dict:
     elif 0 < avg_quality < 0.75:
         config["impute_strategy"] = "median"
         config["outlier_method"] = "iqr"
+
+    # Meta-learning warm start: use best_config from similar historical datasets (if any).
+    try:
+        meta = MetaLearner(db).suggest_pipeline(company_id=company_id, sector_id=sector_id, df=df)
+        if meta and isinstance(meta.get("best_config"), dict):
+            # Meta suggestion wins for core knobs; keep any extra defaults from feedback learning.
+            config.update(meta["best_config"])
+            config["_meta_match"] = meta.get("match")
+    except Exception:
+        # Meta-learner should never break uploads.
+        pass
 
     return config
 
@@ -131,15 +144,12 @@ async def upload_data(
     if current_user.role == 'sector_head' and current_user.sector_id != sector_id:
         raise HTTPException(status_code=403, detail="Access denied: Can only upload to assigned sector")
 
-    # Read file based on extension
-    if file.filename.endswith('.csv'):
-        df = pd.read_csv(file.file)
-    elif file.filename.endswith('.xlsx') or file.filename.endswith('.xls'):
-        df = pd.read_excel(file.file)
-    elif file.filename.endswith('.json'):
-        data = json.load(file.file)
-        df = pd.DataFrame(data)
-    else:
+    # Read file based on extension (csv/xlsx/json/txt/pdf where supported).
+    try:
+        df = load_dataframe_from_uploadfile(file)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception:
         raise HTTPException(status_code=400, detail="Unsupported file format")
 
     # Metadata tagging
@@ -156,7 +166,7 @@ async def upload_data(
     db.refresh(raw_data_entry)
 
     # Upload keeps dataset in pending state; cleaning happens from Data Cleaning page.
-    optimal_config = _adaptive_upload_config(db, df)
+    optimal_config = _adaptive_upload_config(db, df, company_id=current_user.company_id, sector_id=sector_id)
 
     payload = {
         "message": "Data uploaded successfully. Run cleaning from Data Cleaning page.",

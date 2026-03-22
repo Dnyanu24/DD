@@ -7,9 +7,13 @@ import ChatWidget from "./components/ChatWidget";
 import Welcome from "./pages/Welcome";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
+import ResetPassword from "./pages/ResetPassword";
 import CEODashboard from "./pages/CEODashboard";
 import DataAnalystDashboard from "./pages/DataAnalystDashboard";
 import SalesManagerDashboard from "./pages/SalesManagerDashboard";
+import AdminDashboard from "./pages/AdminDashboard";
+import StudentDashboard from "./pages/StudentDashboard";
+import IndividualDashboard from "./pages/IndividualDashboard";
 import DataUpload from "./pages/DataUpload";
 import DataCleaning from "./pages/DataCleaning";
 import AIModels from "./pages/AIModels";
@@ -17,6 +21,7 @@ import Visualizations from "./pages/Visualizations";
 import Reports from "./pages/Reports";
 import RoleManagement from "./pages/RoleManagement";
 import Settings from "./pages/Settings";
+import Profile from "./pages/Profile";
 
 // Protected Route Component
 function ProtectedRoute({ children }) {
@@ -52,12 +57,18 @@ function DashboardRouter() {
   const role = user?.role || "CEO";
 
   switch (role) {
+    case "Admin":
+      return <AdminDashboard />;
     case "CEO":
       return <CEODashboard />;
     case "Data Analyst":
       return <DataAnalystDashboard />;
     case "Sales Manager":
       return <SalesManagerDashboard />;
+    case "Student":
+      return <StudentDashboard />;
+    case "Individual":
+      return <IndividualDashboard />;
     case "Sector Head":
       return <CEODashboard />; // Sector Head sees CEO dashboard
     default:
@@ -81,6 +92,7 @@ function AppLayout() {
             <Route path="/visualizations" element={<RoleRoute path="/visualizations"><Visualizations /></RoleRoute>} />
             <Route path="/reports" element={<RoleRoute path="/reports"><Reports /></RoleRoute>} />
             <Route path="/roles" element={<RoleRoute path="/roles"><RoleManagement /></RoleRoute>} />
+            <Route path="/profile" element={<RoleRoute path="/profile"><Profile /></RoleRoute>} />
             <Route path="/settings" element={<RoleRoute path="/settings"><Settings /></RoleRoute>} />
           </Routes>
         </main>
@@ -97,6 +109,7 @@ function PublicRoutes() {
       <Route path="/" element={<Welcome />} />
       <Route path="/login" element={<Login />} />
       <Route path="/signup" element={<Signup />} />
+      <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

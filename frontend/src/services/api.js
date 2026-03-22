@@ -124,7 +124,7 @@ export async function register(userData) {
       username: userData.username,
       password: userData.password,
       role: userData.role.toLowerCase().replace(" ", "_"),
-      company_id: String(userData.company_id || "").trim(),
+      company_id: String(userData.company_id || "").trim() || null,
       sector_id: userData.sector_id ? Number(userData.sector_id) : null,
     };
     
@@ -187,6 +187,38 @@ export async function getCurrentUser() {
   return res.json();
 }
 
+export async function forgotPassword(usernameOrEmail) {
+  const res = await requestWithBaseFallback(`/api/auth/forgot-password`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify({ username_or_email: String(usernameOrEmail || "").trim() }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.detail || "Failed to start password reset");
+  }
+  return data;
+}
+
+export async function resetPassword(token, newPassword) {
+  const res = await requestWithBaseFallback(`/api/auth/reset-password`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify({ token: String(token || "").trim(), new_password: String(newPassword || "") }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.detail || "Failed to reset password");
+  }
+  return data;
+}
+
 export async function getJoinRequests() {
   const res = await requestWithBaseFallback(`/api/auth/join-requests`, {
     headers: {
@@ -216,6 +248,35 @@ export async function reviewJoinRequest(requestId, action, sectorId = null) {
   return data;
 }
 
+export async function getCompanyUsers() {
+  const res = await requestWithBaseFallback(`/api/auth/company/users`, {
+    headers: {
+      ...getAuthHeaders(),
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.detail || data?.message || "Failed to load company users");
+  }
+  return data;
+}
+
+export async function updateCompanyUser(userId, payload) {
+  const res = await requestWithBaseFallback(`/api/auth/company/users/${encodeURIComponent(String(userId))}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify(payload || {}),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.detail || data?.message || "Failed to update user");
+  }
+  return data;
+}
+
 export async function getAvailableRoles() {
   const res = await fetch(`${BASE_URL}/api/auth/roles`);
   return res.json();
@@ -238,12 +299,16 @@ export async function analyzeFile(file) {
 }
 
 export async function getDashboardData() {
-  const res = await fetch(`${BASE_URL}/api/dashboard/`, {
+  const res = await requestWithBaseFallback(`/api/dashboard/`, {
     headers: {
       ...getAuthHeaders(),
     },
   });
-  return res.json();
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.detail || "Failed to load dashboard data");
+  }
+  return data;
 }
 
 export async function getAIInsights() {
@@ -253,6 +318,19 @@ export async function getAIInsights() {
     },
   });
   return res.json();
+}
+
+export async function getRoleInsights() {
+  const res = await requestWithBaseFallback(`/api/insights/`, {
+    headers: {
+      ...getAuthHeaders(),
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.detail || "Failed to load role insights");
+  }
+  return data;
 }
 
 export async function uploadData(formData) {
@@ -393,6 +471,39 @@ export async function getCleanedDatasets() {
   const data = await res.json();
   if (!res.ok) {
     throw new Error(data?.detail || data?.message || "Failed to load cleaned datasets");
+  }
+  return data;
+}
+
+export async function getCleanedDatasetPreview(cleanedDataId, options = {}) {
+  const params = new URLSearchParams();
+  if (options.limit != null) params.set("limit", String(options.limit));
+  if (options.offset != null) params.set("offset", String(options.offset));
+
+  const res = await requestWithBaseFallback(`/api/analysis/cleaned-datasets/${encodeURIComponent(cleanedDataId)}?${params.toString()}`, {
+    headers: {
+      ...getAuthHeaders(),
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.detail || data?.message || "Failed to load cleaned dataset");
+  }
+  return data;
+}
+
+export async function saveCleanedDataset(payload) {
+  const res = await requestWithBaseFallback(`/api/analysis/saved-cleaned-datasets`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.detail || data?.message || "Failed to save cleaned dataset");
   }
   return data;
 }
@@ -642,6 +753,46 @@ export async function trainAIModel(modelConfig) {
     body: JSON.stringify(modelConfig),
   });
   return res.json();
+}
+
+export async function getProfile() {
+  const res = await requestWithBaseFallback(`/api/auth/profile`, {
+    headers: {
+      ...getAuthHeaders(),
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || data?.message || "Failed to load profile");
+  return data;
+}
+
+export async function updateProfile(payload) {
+  const res = await requestWithBaseFallback(`/api/auth/profile`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || data?.message || "Failed to update profile");
+  return data;
+}
+
+export async function uploadAvatar(file) {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await requestWithBaseFallback(`/api/auth/profile/avatar`, {
+    method: "POST",
+    headers: {
+      ...getAuthHeaders(),
+    },
+    body: form,
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || data?.message || "Failed to upload avatar");
+  return data;
 }
 
 export async function getRolePredictions() {

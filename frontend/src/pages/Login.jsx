@@ -3,6 +3,7 @@ import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { Eye, EyeOff, User, Lock, ArrowRight } from "lucide-react";
 import BrandLogo from "../components/BrandLogo";
+import { forgotPassword } from "../services/api";
 
 export default function Login() {
   const [username, setUsername] = useState("");
@@ -10,6 +11,11 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showForgot, setShowForgot] = useState(false);
+  const [resetIdentifier, setResetIdentifier] = useState("");
+  const [resetToken, setResetToken] = useState("");
+  const [resetMessage, setResetMessage] = useState("");
+  const [resetLoading, setResetLoading] = useState(false);
   const navigate = useNavigate();
   const { login } = useAuth();
 
@@ -30,6 +36,26 @@ export default function Login() {
       setError(err.message || "Login failed. Please check your credentials.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async (e) => {
+    e.preventDefault();
+    setResetMessage("");
+    setResetToken("");
+    setError("");
+    setResetLoading(true);
+
+    try {
+      const res = await forgotPassword(resetIdentifier || username);
+      setResetMessage(res?.message || "If the account exists, a reset token was generated.");
+      if (res?.reset_token) {
+        setResetToken(res.reset_token);
+      }
+    } catch (err) {
+      setResetMessage(err?.message || "Failed to start password reset");
+    } finally {
+      setResetLoading(false);
     }
   };
 
@@ -132,9 +158,16 @@ export default function Login() {
               </label>
             </div>
             <div className="text-sm">
-              <a href="#" className="font-medium text-accent-primary hover:text-accent-hover transition-colors">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowForgot(true);
+                  setResetIdentifier(username);
+                }}
+                className="font-medium text-accent-primary hover:text-accent-hover transition-colors"
+              >
                 Forgot password?
-              </a>
+              </button>
             </div>
           </div>
 
@@ -178,6 +211,58 @@ export default function Login() {
           </button>
 
         </form>
+
+        {showForgot ? (
+          <div className="mt-4 rounded-2xl border border-theme-light bg-theme-secondary p-4">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm font-semibold text-theme-primary">Reset Password</p>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowForgot(false);
+                  setResetMessage("");
+                  setResetToken("");
+                }}
+                className="text-xs font-semibold text-theme-muted hover:text-theme-primary"
+              >
+                Close
+              </button>
+            </div>
+
+            <form onSubmit={handleForgotPassword} className="mt-3 space-y-3">
+              <input
+                value={resetIdentifier}
+                onChange={(e) => setResetIdentifier(e.target.value)}
+                placeholder="Enter username or email"
+                className="block w-full px-3 py-2 bg-theme-primary border border-theme-light rounded-lg text-theme-primary placeholder-theme-muted focus:outline-none focus:ring-2 focus:ring-accent-primary"
+              />
+              <button
+                type="submit"
+                disabled={resetLoading}
+                className="w-full rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60"
+              >
+                {resetLoading ? "Generating..." : "Generate Reset Token"}
+              </button>
+            </form>
+
+            {resetMessage ? <p className="mt-3 text-xs text-theme-muted">{resetMessage}</p> : null}
+
+            {resetToken ? (
+              <div className="mt-3 rounded-xl border border-theme-light bg-theme-primary p-3">
+                <p className="text-xs font-semibold text-theme-primary">Reset Token</p>
+                <p className="mt-2 break-all text-xs text-theme-muted">{resetToken}</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Link
+                    to={`/reset-password?token=${encodeURIComponent(resetToken)}`}
+                    className="rounded-lg border border-theme-light bg-theme-secondary px-3 py-1.5 text-xs font-semibold text-theme-primary hover:bg-theme-tertiary"
+                  >
+                    Continue to reset
+                  </Link>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
         {/* Demo Credentials */}
         <div className="mt-6 p-4 bg-theme-secondary rounded-lg border border-theme-light">

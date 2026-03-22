@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar } from "recharts";
 import KPICard from "../components/KPICard";
+import { getRoleInsights } from "../services/api";
 
 // Default data - can be overridden by props or API
 const defaultSalesData = [
@@ -62,6 +63,9 @@ export default function SalesManagerDashboard({
   alerts: propAlerts,
   recommendations: propRecommendations
 }) {
+  const [insights, setInsights] = useState(null);
+  const [insightsError, setInsightsError] = useState("");
+  const [insightsLoading, setInsightsLoading] = useState(false);
   const [defaultAlerts] = useState([
     { id: 1, type: "warning", message: "Q4 target at 78% - acceleration needed", time: "1 hour ago" },
     { id: 2, type: "info", message: "New lead from Fortune 500 company", time: "3 hours ago" },
@@ -75,9 +79,36 @@ export default function SalesManagerDashboard({
     "Optimize pricing strategy for startup segment",
   ]);
 
-  // Use prop data if provided, otherwise use defaults
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      setInsightsLoading(true);
+      setInsightsError("");
+      try {
+        const data = await getRoleInsights();
+        if (!alive) return;
+        setInsights(data);
+      } catch (e) {
+        if (!alive) return;
+        setInsightsError(e?.message || "Failed to load personalized insights");
+      } finally {
+        if (alive) setInsightsLoading(false);
+      }
+    };
+    load();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const personalizedRecommendations = Array.isArray(insights?.recommendations)
+    ? insights.recommendations.map((r) => r.text).filter(Boolean)
+    : null;
+
+  // Use prop data if provided, otherwise use personalized or defaults
   const alerts = propAlerts || defaultAlerts;
-  const recommendations = propRecommendations || defaultRecommendations;
+  const recommendations = propRecommendations || personalizedRecommendations || defaultRecommendations;
+  const actions = Array.isArray(insights?.actions) ? insights.actions : [];
 
   // Check if data is empty
   const hasSalesData = salesData && salesData.length > 0;
@@ -89,13 +120,32 @@ export default function SalesManagerDashboard({
 
   return (
     <div className="space-y-6">
+      {insightsError ? (
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          {insightsError}
+        </div>
+      ) : null}
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <KPICard title="Daily Sales" value="$16,800" change="+12.5%" changeType="positive" />
-        <KPICard title="Weekly Performance" value="$70,500" change="+8.7%" changeType="positive" />
-        <KPICard title="Conversion Rate" value="24.3%" change="+3.2%" changeType="positive" />
-        <KPICard title="Monthly Target Progress" value="78%" change="-2.1%" changeType="negative" />
+        {Array.isArray(insights?.kpis) && insights.kpis.length ? (
+          insights.kpis.slice(0, 4).map((kpi) => (
+            <KPICard
+              key={kpi.title}
+              title={kpi.title}
+              value={kpi.unit ? `${kpi.value}${kpi.unit}` : String(kpi.value ?? "-")}
+              change=""
+              changeType="positive"
+            />
+          ))
+        ) : (
+          <>
+            <KPICard title="Daily Sales" value={insightsLoading ? "..." : "$16,800"} change="+12.5%" changeType="positive" />
+            <KPICard title="Weekly Performance" value={insightsLoading ? "..." : "$70,500"} change="+8.7%" changeType="positive" />
+            <KPICard title="Conversion Rate" value={insightsLoading ? "..." : "24.3%"} change="+3.2%" changeType="positive" />
+            <KPICard title="Monthly Target Progress" value={insightsLoading ? "..." : "78%"} change="-2.1%" changeType="negative" />
+          </>
+        )}
       </div>
 
       {/* Charts Row 1 */}
@@ -314,6 +364,24 @@ export default function SalesManagerDashboard({
           </div>
           ) : (
             <EmptyState message="No recommendations at this time" />
+          )}
+        </div>
+
+        {/* Suggested Actions (Role Insights) */}
+        <div className="bg-theme-card p-6 rounded-2xl shadow-lg transition-colors duration-300">
+          <h3 className="text-lg font-semibold text-theme-primary mb-4">Suggested Actions</h3>
+          {actions.length ? (
+            <div className="space-y-3">
+              {actions.slice(0, 8).map((action, index) => (
+                <div key={index} className="rounded-xl border border-theme-light bg-theme-secondary p-4">
+                  <p className="text-sm text-theme-secondary">{action}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-theme-muted">
+              {insightsLoading ? "Loading actions..." : "No personalized actions available yet."}
+            </p>
           )}
         </div>
       </div>

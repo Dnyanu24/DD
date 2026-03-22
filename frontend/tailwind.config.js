@@ -46,6 +46,25 @@ module.exports = {
       fontFamily: {
         sans: ['Inter', 'system-ui', 'sans-serif'],
       },
+      keyframes: {
+        "fade-up": {
+          "0%": { opacity: "0", transform: "translateY(12px)" },
+          "100%": { opacity: "1", transform: "translateY(0)" },
+        },
+        "float-slow": {
+          "0%, 100%": { transform: "translateY(0)" },
+          "50%": { transform: "translateY(-6px)" },
+        },
+        "pulse-soft": {
+          "0%, 100%": { opacity: "0.55" },
+          "50%": { opacity: "0.9" },
+        },
+      },
+      animation: {
+        "fade-up": "fade-up 700ms cubic-bezier(0.16, 1, 0.3, 1) both",
+        "float-slow": "float-slow 7s ease-in-out infinite",
+        "pulse-soft": "pulse-soft 4.5s ease-in-out infinite",
+      },
     },
   },
   plugins: [],

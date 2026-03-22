@@ -2,11 +2,25 @@ from collections import defaultdict
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from typing import Optional, List
+from typing import Optional, List, Dict, Any, Tuple
 from pydantic import BaseModel
 from app.database import SessionLocal
-from app.models import AIPrediction, AIRecommendation, Sector, RawData, CleanedData, User, Product
+from app.models import (
+    AIPrediction,
+    AIRecommendation,
+    Sector,
+    RawData,
+    CleanedData,
+    User,
+    Product,
+    CompanyAnnouncement,
+    PipelineIterationLog,
+    MetaLearningExperience,
+)
 from app.services.ai_predictions import AIPredictionEngine
+from app.services.feedback_engine import FeedbackEngine
+from app.services.meta_learner import MetaLearner
+from app.services.rag_retriever import RagIndex, RagChunk, build_software_chunks, format_dataset_table
 from app.dependencies import get_current_user, require_sector_head, require_ceo
 
 router = APIRouter()
@@ -21,6 +35,7 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     reply: str
     suggestions: List[str]
+    sources: Optional[List[Dict[str, Any]]] = None
 
 
 class RolePredictionResponse(BaseModel):
@@ -44,13 +59,258 @@ def _allowed_sector_ids(db: Session, current_user: User) -> List[int]:
 
 
 def _allowed_uploader_ids(db: Session, current_user: User) -> List[int]:
-    return [
-        row[0]
-        for row in db.query(User.id).filter(
-            User.company_id == current_user.company_id,
-            User.role == current_user.role,
-        ).all()
+    # Company-scope access for shared data (role/sector filters still apply elsewhere).
+    return [row[0] for row in db.query(User.id).filter(User.company_id == current_user.company_id).all()]
+
+
+_RAG_CACHE: Dict[Tuple[int, Optional[int]], Dict[str, Any]] = {}
+
+
+def _clip(text: str, limit: int = 280) -> str:
+    s = (text or "").strip()
+    if len(s) <= limit:
+        return s
+    return (s[:limit].rsplit(" ", 1)[0] or s[:limit]).strip() + "..."
+
+
+def _rag_state_fingerprint(db: Session, company_id: int) -> str:
+    """
+    Cheap DB fingerprint to refresh cached RAG index when core tables change.
+    """
+    def _max_iso(model, attr: str) -> str:
+        try:
+            row = db.query(getattr(model, attr)).order_by(getattr(model, attr).desc()).first()
+            value = row[0] if row else None
+            return value.isoformat() if value else ""
+        except Exception:
+            return ""
+
+    parts = [
+        _max_iso(RawData, "uploaded_at"),
+        _max_iso(CleanedData, "cleaned_at"),
+        _max_iso(CompanyAnnouncement, "created_at"),
+        _max_iso(PipelineIterationLog, "created_at"),
+        _max_iso(MetaLearningExperience, "created_at"),
     ]
+    return "|".join(parts)
+
+
+def _build_database_chunks(
+    db: Session,
+    *,
+    current_user: User,
+    sector_ids: List[int],
+    uploader_ids: List[int],
+    total_raw: int,
+    total_cleaned: int,
+    latest_raw: Optional[RawData],
+    latest_cleaned: Optional[CleanedData],
+    schema_preview: str,
+) -> List[RagChunk]:
+    now = datetime.utcnow().isoformat()
+    latest_quality = round((latest_cleaned.quality_score * 100), 2) if latest_cleaned else 0.0
+    chunks: List[RagChunk] = []
+
+    chunks.append(
+        RagChunk(
+            chunk_id="db:overview",
+            source="database",
+            title="Database Overview",
+            text=(
+                f"Uploaded datasets: {total_raw}. Cleaned datasets: {total_cleaned}. "
+                f"Latest upload id: {getattr(latest_raw, 'id', None)}. "
+                f"Latest cleaned quality: {latest_quality}%. "
+                f"Recent schema columns: {schema_preview}."
+            ),
+            meta={"company_id": current_user.company_id, "updated_at": now},
+        )
+    )
+
+    # Recent cleaned datasets (top N)
+    try:
+        cleaned_rows = (
+            db.query(CleanedData)
+            .join(RawData, CleanedData.raw_data_id == RawData.id)
+            .filter(RawData.sector_id.in_(sector_ids), RawData.uploaded_by.in_(uploader_ids))
+            .order_by(CleanedData.cleaned_at.desc())
+            .limit(12)
+            .all()
+        )
+        table_rows = []
+        for row in cleaned_rows:
+            records = row.cleaned_data if isinstance(row.cleaned_data, list) else []
+            cols = list(records[0].keys()) if records and isinstance(records[0], dict) else []
+            table_rows.append(
+                {
+                    "cleaned_data_id": row.id,
+                    "row_count": len(records),
+                    "column_count": len(cols),
+                    "columns": cols,
+                    "quality_score": float(row.quality_score or 0.0),
+                    "algorithm": row.cleaning_algorithm,
+                }
+            )
+        chunks.append(
+            RagChunk(
+                chunk_id="db:recent_cleaned",
+                source="database",
+                title="Recent Cleaned Datasets",
+                text="Recent cleaned datasets:\n" + format_dataset_table(table_rows, limit=8),
+                meta={"company_id": current_user.company_id, "updated_at": now},
+            )
+        )
+    except Exception:
+        pass
+
+    # Recent announcements
+    try:
+        rows = (
+            db.query(CompanyAnnouncement)
+            .filter(CompanyAnnouncement.company_id == current_user.company_id)
+            .order_by(CompanyAnnouncement.created_at.desc())
+            .limit(5)
+            .all()
+        )
+        if rows:
+            lines = []
+            for row in rows:
+                created = row.created_at.isoformat() if row.created_at else ""
+                lines.append(f"- {row.title}: {row.message} ({created})")
+            chunks.append(
+                RagChunk(
+                    chunk_id="db:announcements",
+                    source="database",
+                    title="Company Announcements",
+                    text="Recent announcements:\n" + "\n".join(lines),
+                    meta={"company_id": current_user.company_id, "updated_at": now},
+                )
+            )
+    except Exception:
+        pass
+
+    # Self-learning / iterations
+    try:
+        rows = (
+            db.query(PipelineIterationLog)
+            .filter(PipelineIterationLog.company_id == current_user.company_id)
+            .order_by(PipelineIterationLog.created_at.desc())
+            .limit(8)
+            .all()
+        )
+        if rows:
+            lines = []
+            for row in rows:
+                created = row.created_at.isoformat() if row.created_at else ""
+                score = row.metrics.get("cleaned_percent") if isinstance(row.metrics, dict) else None
+                lines.append(f"- task={row.task} status={row.status} score={score} at={created}")
+            chunks.append(
+                RagChunk(
+                    chunk_id="db:pipeline_iterations",
+                    source="database",
+                    title="Pipeline Iteration Logs",
+                    text="Recent iteration logs:\n" + "\n".join(lines),
+                    meta={"company_id": current_user.company_id, "updated_at": now},
+                )
+            )
+    except Exception:
+        pass
+
+    # Meta-learning experiences
+    try:
+        rows = (
+            db.query(MetaLearningExperience)
+            .filter(MetaLearningExperience.company_id == current_user.company_id)
+            .order_by(MetaLearningExperience.created_at.desc())
+            .limit(5)
+            .all()
+        )
+        if rows:
+            lines = []
+            for row in rows:
+                created = row.created_at.isoformat() if row.created_at else ""
+                best_cfg = row.best_config or {}
+                lines.append(f"- exp_id={row.id} sector_id={row.sector_id} cfg_keys={list(best_cfg.keys())[:6]} at={created}")
+            chunks.append(
+                RagChunk(
+                    chunk_id="db:meta_learning",
+                    source="database",
+                    title="Meta-Learning Experiences",
+                    text="Recent meta-learning records:\n" + "\n".join(lines),
+                    meta={"company_id": current_user.company_id, "updated_at": now},
+                )
+            )
+    except Exception:
+        pass
+
+    return chunks
+
+
+def _get_rag_index(db: Session, *, current_user: User) -> RagIndex:
+    company_id = int(current_user.company_id)
+    sector_key = int(current_user.sector_id) if getattr(current_user, "sector_id", None) is not None else None
+    cache_key = (company_id, sector_key)
+    fp = _rag_state_fingerprint(db, company_id)
+
+    cached = _RAG_CACHE.get(cache_key)
+    if cached and cached.get("fingerprint") == fp and isinstance(cached.get("index"), RagIndex):
+        return cached["index"]
+
+    # Build a base index with software + company database chunks (fast, cached).
+    sector_ids = _allowed_sector_ids(db, current_user) or [-1]
+    uploader_ids = _allowed_uploader_ids(db, current_user) or [-1]
+    total_raw = db.query(RawData).filter(RawData.sector_id.in_(sector_ids), RawData.uploaded_by.in_(uploader_ids)).count()
+    total_cleaned = (
+        db.query(CleanedData)
+        .join(RawData, CleanedData.raw_data_id == RawData.id)
+        .filter(RawData.sector_id.in_(sector_ids), RawData.uploaded_by.in_(uploader_ids))
+        .count()
+    )
+    latest_raw = (
+        db.query(RawData)
+        .filter(RawData.sector_id.in_(sector_ids), RawData.uploaded_by.in_(uploader_ids))
+        .order_by(RawData.uploaded_at.desc())
+        .first()
+    )
+    latest_cleaned = (
+        db.query(CleanedData)
+        .join(RawData, CleanedData.raw_data_id == RawData.id)
+        .filter(RawData.sector_id.in_(sector_ids), RawData.uploaded_by.in_(uploader_ids))
+        .order_by(CleanedData.cleaned_at.desc())
+        .first()
+    )
+
+    recent_raw = (
+        db.query(RawData)
+        .filter(RawData.sector_id.in_(sector_ids), RawData.uploaded_by.in_(uploader_ids))
+        .order_by(RawData.uploaded_at.desc())
+        .limit(20)
+        .all()
+    )
+    schema_cols = set()
+    for item in recent_raw:
+        if isinstance(item.data, list) and item.data and isinstance(item.data[0], dict):
+            schema_cols.update(item.data[0].keys())
+    schema_preview = ", ".join(sorted(list(schema_cols))[:10]) if schema_cols else "no columns detected"
+
+    chunks: List[RagChunk] = []
+    chunks.extend(build_software_chunks())
+    chunks.extend(
+        _build_database_chunks(
+            db,
+            current_user=current_user,
+            sector_ids=sector_ids,
+            uploader_ids=uploader_ids,
+            total_raw=total_raw,
+            total_cleaned=total_cleaned,
+            latest_raw=latest_raw,
+            latest_cleaned=latest_cleaned,
+            schema_preview=schema_preview,
+        )
+    )
+
+    index = RagIndex(chunks).fit()
+    _RAG_CACHE[cache_key] = {"fingerprint": fp, "index": index}
+    return index
 
 
 def _ensure_sector_access(db: Session, current_user: User, sector_id: int) -> None:
@@ -74,6 +334,46 @@ def _safe_float(value) -> Optional[float]:
         return float(cleaned)
     except (TypeError, ValueError):
         return None
+
+
+def _to_json_safe_records(df):
+    import numpy as np
+    import pandas as pd
+
+    if df is None or not isinstance(df, pd.DataFrame):
+        return []
+
+    safe_df = df.copy()
+    for col in safe_df.columns:
+        if pd.api.types.is_datetime64_any_dtype(safe_df[col]):
+            safe_df[col] = safe_df[col].dt.strftime("%Y-%m-%dT%H:%M:%S")
+    safe_df = safe_df.where(pd.notnull(safe_df), None)
+
+    records = safe_df.to_dict("records")
+    normalized = []
+    for row in records:
+        if not isinstance(row, dict):
+            continue
+        normalized_row = {}
+        for key, value in row.items():
+            if isinstance(value, pd.Timestamp):
+                normalized_row[key] = value.isoformat()
+            elif isinstance(value, np.generic):
+                normalized_row[key] = value.item()
+            else:
+                normalized_row[key] = value
+        normalized.append(normalized_row)
+    return normalized
+
+
+def _quality_score_from_df(df) -> float:
+    import pandas as pd
+
+    if df is None or not isinstance(df, pd.DataFrame) or df.shape[0] == 0:
+        return 0.0
+    total_cells = max(int(df.shape[0]) * max(int(df.shape[1]), 1), 1)
+    missing_cells = int(df.isna().sum().sum())
+    return float(max(0.0, min(1.0, 1 - (missing_cells / total_cells))))
 
 
 def _extract_dataset_signal(records: List[dict]) -> dict:
@@ -539,10 +839,17 @@ async def chat_assistant(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Simple context-aware assistant for SDAS without external LLM dependency."""
-    text = (payload.message or "").strip().lower()
+    """
+    RAG-style assistant for SDAS (no external LLM required):
+    - Retrieves relevant "software" + "database" chunks (TF-IDF).
+    - Adds live database stats (counts, latest quality).
+    - Optionally adds dataset-specific context using dataset_id (raw_data id).
+    """
+    raw_message = (payload.message or "").strip()
+    text = raw_message.lower()
     role_raw = (getattr(current_user, "role", "") or "").strip()
     role_key = role_raw.lower().replace(" ", "_")
+
     if not text:
         return {
             "reply": "Please type a question about uploads, cleaning, reports, or visualizations.",
@@ -551,142 +858,167 @@ async def chat_assistant(
                 "What cleaning algorithm should I use?",
                 "Show data quality summary",
             ],
+            "sources": [],
         }
 
-    sector_ids = _allowed_sector_ids(db, current_user)
-    uploader_ids = _allowed_uploader_ids(db, current_user)
+    sector_ids = _allowed_sector_ids(db, current_user) or []
+    uploader_ids = _allowed_uploader_ids(db, current_user) or []
     if not sector_ids or not uploader_ids:
         sector_ids = [-1]
         uploader_ids = [-1]
-    total_raw = db.query(RawData).filter(
-        RawData.sector_id.in_(sector_ids),
-        RawData.uploaded_by.in_(uploader_ids),
-    ).count()
-    total_cleaned = db.query(CleanedData)\
-        .join(RawData, CleanedData.raw_data_id == RawData.id)\
-        .filter(
-            RawData.sector_id.in_(sector_ids),
-            RawData.uploaded_by.in_(uploader_ids),
-        ).count()
-    latest_raw = db.query(RawData).filter(
-        RawData.sector_id.in_(sector_ids),
-        RawData.uploaded_by.in_(uploader_ids),
-    ).order_by(RawData.uploaded_at.desc()).first()
-    latest_cleaned = db.query(CleanedData)\
-        .join(RawData, CleanedData.raw_data_id == RawData.id)\
-        .filter(
-            RawData.sector_id.in_(sector_ids),
-            RawData.uploaded_by.in_(uploader_ids),
-        )\
-        .order_by(CleanedData.cleaned_at.desc()).first()
-    latest_quality = round((latest_cleaned.quality_score * 100), 2) if latest_cleaned else 0
+
+    total_raw = db.query(RawData).filter(RawData.sector_id.in_(sector_ids), RawData.uploaded_by.in_(uploader_ids)).count()
+    total_cleaned = (
+        db.query(CleanedData)
+        .join(RawData, CleanedData.raw_data_id == RawData.id)
+        .filter(RawData.sector_id.in_(sector_ids), RawData.uploaded_by.in_(uploader_ids))
+        .count()
+    )
+    latest_raw = (
+        db.query(RawData)
+        .filter(RawData.sector_id.in_(sector_ids), RawData.uploaded_by.in_(uploader_ids))
+        .order_by(RawData.uploaded_at.desc())
+        .first()
+    )
+    latest_cleaned = (
+        db.query(CleanedData)
+        .join(RawData, CleanedData.raw_data_id == RawData.id)
+        .filter(RawData.sector_id.in_(sector_ids), RawData.uploaded_by.in_(uploader_ids))
+        .order_by(CleanedData.cleaned_at.desc())
+        .first()
+    )
+    latest_quality = round((latest_cleaned.quality_score * 100), 2) if latest_cleaned else 0.0
     role_scope = "company-wide" if role_key in ["ceo", "admin"] else "role-limited"
 
-    # Lightweight "training by data": gather recent schema context from accessible datasets.
-    recent_raw = db.query(RawData).filter(
-        RawData.sector_id.in_(sector_ids),
-        RawData.uploaded_by.in_(uploader_ids),
-    ).order_by(RawData.uploaded_at.desc()).limit(20).all()
+    recent_raw = (
+        db.query(RawData)
+        .filter(RawData.sector_id.in_(sector_ids), RawData.uploaded_by.in_(uploader_ids))
+        .order_by(RawData.uploaded_at.desc())
+        .limit(20)
+        .all()
+    )
     schema_cols = set()
     for item in recent_raw:
         if isinstance(item.data, list) and item.data and isinstance(item.data[0], dict):
             schema_cols.update(item.data[0].keys())
-    schema_preview = ", ".join(sorted(list(schema_cols))[:8]) if schema_cols else "no columns detected"
+    schema_preview = ", ".join(sorted(list(schema_cols))[:10]) if schema_cols else "no columns detected"
+
+    # RAG retrieval (software + database index + optional dataset chunk).
+    index = _get_rag_index(db, current_user=current_user)
+    dataset_chunks: List[RagChunk] = []
+    if payload.dataset_id:
+        try:
+            dataset_id = int(payload.dataset_id)
+            raw_row = (
+                db.query(RawData)
+                .filter(
+                    RawData.id == dataset_id,
+                    RawData.sector_id.in_(sector_ids),
+                    RawData.uploaded_by.in_(uploader_ids),
+                )
+                .first()
+            )
+            cleaned_row = (
+                db.query(CleanedData)
+                .filter(CleanedData.raw_data_id == dataset_id)
+                .order_by(CleanedData.cleaned_at.desc())
+                .first()
+            )
+            if raw_row:
+                records = raw_row.data if isinstance(raw_row.data, list) else []
+                cols = list(records[0].keys()) if records and isinstance(records[0], dict) else []
+                total_cells = max(len(records) * max(len(cols), 1), 1)
+                missing_cells = 0
+                if records and isinstance(records[0], dict):
+                    missing_cells = sum(
+                        1
+                        for r in records
+                        for v in r.values()
+                        if v in (None, "")
+                    )
+                miss_pct = round((missing_cells / total_cells) * 100.0, 2)
+                q = round(float(cleaned_row.quality_score or 0.0) * 100.0, 2) if cleaned_row else None
+                dataset_chunks.append(
+                    RagChunk(
+                        chunk_id=f"dataset:{dataset_id}",
+                        source="dataset",
+                        title=f"Dataset {dataset_id} Summary",
+                        text=(
+                            f"Dataset id {dataset_id} has {len(records)} rows and {len(cols)} columns. "
+                            f"Columns: {', '.join([str(c) for c in cols[:20]])}. "
+                            f"Raw missing cells: {miss_pct}%. "
+                            f"Latest cleaned quality: {q}%." if q is not None else f"Dataset id {dataset_id} has {len(records)} rows and {len(cols)} columns."
+                        ),
+                        meta={"raw_data_id": dataset_id, "columns": cols[:50]},
+                    )
+                )
+        except Exception:
+            pass
+
+    base_hits = index.search(raw_message, top_k=5)
+    extra_hits = index.score_extra_chunks(raw_message, dataset_chunks, top_k=2)
+    merged = {h.chunk.chunk_id: h for h in (base_hits + extra_hits)}
+    ranked_hits = sorted(merged.values(), key=lambda h: h.score, reverse=True)
+    sources = [
+        {
+            "id": h.chunk.chunk_id,
+            "source": h.chunk.source,
+            "title": h.chunk.title,
+            "score": round(float(h.score), 4),
+            "snippet": _clip(h.chunk.text, 220),
+            "meta": h.chunk.meta,
+        }
+        for h in ranked_hits[:6]
+    ]
+
+    reply = ""
+    suggestions: List[str] = []
 
     if any(keyword in text for keyword in ["all company", "all sectors", "all data"]) and role_key not in ["ceo", "admin"]:
-        return {
-            "reply": (
-                "You can access only your authorized role scope. "
-                "Ask for insights from your assigned sector/company view."
-            ),
-            "suggestions": [
-                "Show my accessible datasets",
-                "What columns exist in my scope?",
-                "How many cleaned datasets can I use?",
-            ],
-        }
-
-    if "upload" in text or "dataset" in text:
         reply = (
-            f"There are {total_raw} uploaded datasets. "
-            f"{total_cleaned} datasets have cleaned output. "
-            f"The latest upload id is {latest_raw.id if latest_raw else 'N/A'}. "
-            f"Visible schema sample: {schema_preview}."
+            "You can access only your authorized role scope. "
+            "Ask for insights from your assigned sector/company view."
         )
-        role_hint = {
-            "ceo": "You can compare datasets across sectors from dashboard and reports.",
-            "data_analyst": "You can move directly to cleaning after selecting a dataset.",
-            "sales_manager": "You can focus on visualization and report pages for sales insights.",
-            "sector_head": "You can track only your sector data and run cleaning for your team.",
-        }.get(role_key, "")
-        if role_hint:
-            reply = f"{reply} {role_hint}"
-        return {
-            "reply": reply,
-            "suggestions": [
-                "How do I clean the latest dataset?",
-                "Show cleaning progress steps",
-                "Which page lists uploaded data?",
-            ],
-        }
-
-    if "clean" in text or "algorithm" in text or "quality" in text:
+        suggestions = ["Show my accessible datasets", "What columns exist in my scope?", "How many cleaned datasets can I use?"]
+    elif "upload" in text or "dataset" in text:
         reply = (
-            f"Current cleaned dataset count is {total_cleaned}. "
-            f"Latest quality score is {latest_quality}%. "
-            "Use full_pipeline for most cases, missing_values for null-heavy data, "
-            "duplicates for repeated rows, and outliers for distribution cleanup."
+            f"Database totals ({role_scope}): uploaded={total_raw}, cleaned={total_cleaned}. "
+            f"Latest upload id is {latest_raw.id if latest_raw else 'N/A'}. "
+            f"Common columns in your scope: {schema_preview}."
         )
-        if role_key == "sales_manager":
-            reply = (
-                f"{reply} If cleaning controls are restricted for your role, "
-                "coordinate with Data Analyst or Sector Head and monitor final quality in visualizations."
-            )
-        return {
-            "reply": reply,
-            "suggestions": [
-                "Start full pipeline cleaning",
-                "Explain ML and clustering steps",
-                "How does feedback learning improve cleaning?",
-            ],
-        }
-
-    if "visual" in text or "graph" in text or "chart" in text:
+        suggestions = ["How do I clean the latest dataset?", "Which page lists uploaded data?", "Show data quality summary"]
+    elif "clean" in text or "algorithm" in text or "quality" in text:
         reply = (
-            "Open the Visualizations page to see dashboard graphs based on uploaded data: "
-            "rows by sector, monthly trend, quality distribution, status split, and top datasets."
+            f"Cleaning status: cleaned={total_cleaned}, latest quality={latest_quality}%. "
+            "SDAS uses self-learning imputation selection (mean/median/KNN/regression) and records best configs for similar datasets."
         )
-        return {
-            "reply": reply,
-            "suggestions": [
-                "Go to visualizations",
-                "Which chart shows quality distribution?",
-                "How to improve low-quality datasets?",
-            ],
-        }
+        suggestions = ["Start full pipeline cleaning", "Explain which imputation method was selected", "How does meta-learning help future cleaning?"]
+    elif "visual" in text or "graph" in text or "chart" in text:
+        reply = (
+            "Visualizations are built from real SQLite values. "
+            "Use the Visualizations page for sector vs sales, region distribution, scatter plots, distributions, and growth waves."
+        )
+        suggestions = ["Open visualizations", "Which chart shows data quality?", "How to improve low-quality datasets?"]
+    elif "report" in text:
+        reply = "Use Reports to view generated summaries and export outputs after cleaning and analysis steps."
+        suggestions = ["Open reports page", "What data is included in reports?", "How to export report files?"]
+    else:
+        page_hint = f" on {payload.page}" if payload.page else ""
+        reply = (
+            f"I can help with uploads, cleaning, visualizations, roles, and reports{page_hint}. "
+            f"Database totals in your scope: uploaded={total_raw}, cleaned={total_cleaned}, latest_quality={latest_quality}%."
+        )
+        suggestions = ["How to upload and clean a dataset?", "Show data quality summary", "How to view dashboard graphs?"]
 
-    if "report" in text:
-        return {
-            "reply": "Use Reports to view generated summaries and schedule outputs after cleaning and analysis steps.",
-            "suggestions": [
-                "Open reports page",
-                "What data is included in reports?",
-                "How to export report files?",
-            ],
-        }
+    if ranked_hits:
+        reply += "\n\nRelevant knowledge (RAG):"
+        for hit in ranked_hits[:4]:
+            reply += f"\n- {hit.chunk.title}: {_clip(hit.chunk.text, 220)}"
 
-    page_hint = f" on {payload.page}" if payload.page else ""
-    return {
-        "reply": (
-            f"I can help with uploads, cleaning, visualizations, and reports{page_hint}. "
-            f"Current totals: uploaded={total_raw}, cleaned={total_cleaned}, scope={role_scope}. Ask a specific action."
-        ),
-        "suggestions": [
-            "How to upload and clean a dataset?",
-            "Show cleaning best algorithm",
-            "How to view dashboard graphs?",
-        ],
-    }
+    if payload.dataset_id:
+        reply += f"\n\nDataset context: dataset_id={payload.dataset_id}."
+
+    return {"reply": reply, "suggestions": suggestions, "sources": sources}
 
 @router.post("/predict/sales")
 async def predict_sales(
@@ -836,6 +1168,115 @@ async def predict_risk(
     db.commit()
 
     return result
+
+
+@router.post("/predict/risk/optimized")
+async def predict_risk_optimized(
+    sector_id: int,
+    features: List[str],
+    target_column: str,
+    max_iterations: int = 3,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_sector_head),
+):
+    """
+    Risk prediction with cross-layer feedback optimization (few iterations).
+
+    - Re-runs preprocessing/imputation when performance drops.
+    - Logs each iteration to `pipeline_iteration_logs` (SQLite).
+    - Saves the improved cleaned dataset back to `cleaned_data`.
+    - Records the experience to the meta-learning config store.
+    """
+
+    _ensure_sector_access(db, current_user, sector_id)
+    uploader_ids = _allowed_uploader_ids(db, current_user)
+    if not uploader_ids:
+        raise HTTPException(status_code=404, detail="No data available for optimization")
+
+    raw_row = (
+        db.query(RawData)
+        .filter(RawData.sector_id == sector_id, RawData.uploaded_by.in_(uploader_ids))
+        .order_by(RawData.uploaded_at.desc())
+        .first()
+    )
+    if not raw_row:
+        raise HTTPException(status_code=404, detail="No raw data available for optimization")
+
+    import pandas as pd
+
+    raw_df = pd.DataFrame(raw_row.data or [])
+    if raw_df.shape[0] < 10:
+        raise HTTPException(status_code=400, detail="Insufficient data for optimized risk prediction")
+
+    engine = FeedbackEngine(
+        db,
+        company_id=current_user.company_id,
+        sector_id=sector_id,
+        task="risk_prediction",
+        max_iterations=int(max_iterations),
+    )
+
+    try:
+        run = engine.optimize_risk_prediction(raw_df, features=features, target_column=target_column)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Optimization failed: {str(e)}")
+
+    if run.cleaned_df is None:
+        raise HTTPException(status_code=500, detail="Optimization did not produce a cleaned dataset")
+
+    cleaned_records = _to_json_safe_records(run.cleaned_df)
+    quality_score = _quality_score_from_df(run.cleaned_df)
+
+    cleaned_entry = CleanedData(
+        raw_data_id=raw_row.id,
+        cleaned_data=cleaned_records,
+        cleaning_algorithm="feedback_optimized",
+        quality_score=float(round(quality_score, 4)),
+    )
+    db.add(cleaned_entry)
+    db.commit()
+    db.refresh(cleaned_entry)
+
+    prediction_entry = AIPrediction(
+        sector_id=sector_id,
+        prediction_type="risk_prediction",
+        prediction_data=run.best_result,
+        confidence=float(run.best_result.get("confidence", 0.5) or 0.5),
+    )
+    db.add(prediction_entry)
+    db.commit()
+    db.refresh(prediction_entry)
+
+    # Store new experience for meta-learning warm starts.
+    try:
+        MetaLearner(db).record_experience(
+            company_id=current_user.company_id,
+            sector_id=sector_id,
+            df=raw_df,
+            best_config=run.best_cleaning_config,
+            best_model={"model_type": run.best_result.get("model_type"), "params": {}},
+            best_metrics=run.best_metrics,
+            source_cleaned_data_id=cleaned_entry.id,
+        )
+    except Exception:
+        pass
+
+    return {
+        **run.best_result,
+        "optimization": {
+            "run_key": run.run_key,
+            "status": run.status,
+            "iterations": run.iterations,
+            "best_cleaning_config": run.best_cleaning_config,
+            "best_score": round(run.best_score, 6),
+            "baseline_previous_metrics": run.baseline_previous_metrics,
+            "iteration_logs": run.logs,
+            "saved_cleaned_data_id": cleaned_entry.id,
+            "prediction_id": prediction_entry.id,
+        },
+    }
 
 @router.post("/recommend")
 async def generate_recommendations(

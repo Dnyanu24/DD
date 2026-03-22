@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   CartesianGrid,
   Cell,
@@ -13,7 +13,7 @@ import {
 } from "recharts";
 import KPICard from "../components/KPICard";
 import AIInsights from "../components/AIInsights";
-import { createAnnouncement, getJoinRequests, reviewJoinRequest } from "../services/api";
+import { createAnnouncement, getDashboardData, getJoinRequests, reviewJoinRequest } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 
 const defaultTrendData = [
@@ -44,6 +44,9 @@ export default function CEODashboard({
 }) {
   const { user } = useAuth();
   const isCeoView = user?.role === "CEO";
+  const [dashboard, setDashboard] = useState(null);
+  const [dashboardLoading, setDashboardLoading] = useState(false);
+  const [dashboardError, setDashboardError] = useState("");
   const [joinRequests, setJoinRequests] = useState([]);
   const [requestsLoading, setRequestsLoading] = useState(false);
   const [requestsError, setRequestsError] = useState("");
@@ -71,6 +74,28 @@ export default function CEODashboard({
     loadJoinRequests();
   }, [isCeoView]);
 
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      setDashboardLoading(true);
+      setDashboardError("");
+      try {
+        const data = await getDashboardData();
+        if (!alive) return;
+        setDashboard(data);
+      } catch (error) {
+        if (!alive) return;
+        setDashboardError(error.message || "Failed to load CEO dashboard data.");
+      } finally {
+        if (alive) setDashboardLoading(false);
+      }
+    };
+    load();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const handleReview = async (request, action) => {
     setReviewingId(request.id);
     setRequestsError("");
@@ -86,6 +111,22 @@ export default function CEODashboard({
   };
 
   const pendingRequests = joinRequests.filter((item) => item.status === "pending");
+
+  const computedKpis = useMemo(() => {
+    const overview = dashboard?.company_overview || {};
+    const sectorComparison = Array.isArray(dashboard?.sector_comparison) ? dashboard.sector_comparison : [];
+    const avgQuality =
+      sectorComparison.length
+        ? sectorComparison.reduce((acc, row) => acc + Number(row.avg_quality || 0), 0) / sectorComparison.length
+        : null;
+
+    return {
+      totalSectors: overview.total_sectors ?? null,
+      totalProducts: overview.total_products ?? null,
+      totalUploads: overview.total_uploads ?? null,
+      avgQuality: avgQuality != null ? Number(avgQuality).toFixed(2) : null,
+    };
+  }, [dashboard]);
 
   const handlePostAnnouncement = async () => {
     if (!announcementTitle.trim() || !announcementMessage.trim()) return;
@@ -107,6 +148,7 @@ export default function CEODashboard({
 
   return (
     <div className="space-y-6">
+      {dashboardError ? <p className="text-sm text-red-600">{dashboardError}</p> : null}
       {isCeoView ? (
         <div className="space-y-6">
           <div className="bg-theme-card rounded-2xl p-6 shadow-lg transition-colors duration-300">
@@ -203,10 +245,10 @@ export default function CEODashboard({
       ) : null}
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
-        <KPICard title="Total Revenue" value="$1.2M" change="+12.5%" changeType="positive" />
-        <KPICard title="Monthly Growth" value="7.9%" change="+2.1%" changeType="positive" />
-        <KPICard title="Active Users" value="15,420" change="+8.3%" changeType="positive" />
-        <KPICard title="AI Forecasted Revenue" value="$2.1M" change="+18.2%" changeType="positive" />
+        <KPICard title="Total Sectors" value={computedKpis.totalSectors ?? (dashboardLoading ? "..." : "-")} change="" changeType="positive" />
+        <KPICard title="Total Products" value={computedKpis.totalProducts ?? (dashboardLoading ? "..." : "-")} change="" changeType="positive" />
+        <KPICard title="Total Uploads" value={computedKpis.totalUploads ?? (dashboardLoading ? "..." : "-")} change="" changeType="positive" />
+        <KPICard title="Avg Data Quality" value={computedKpis.avgQuality != null ? `${computedKpis.avgQuality}%` : (dashboardLoading ? "..." : "-")} change="" changeType="positive" />
       </div>
 
       <AIInsights />

@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   AlertTriangle,
+  BarChart3,
   CheckCircle2,
   Database,
   Download,
@@ -30,6 +32,7 @@ import {
   streamDataCleaning,
   downloadCleanedDataset,
   downloadAllCleanedDatasets,
+  saveCleanedDataset,
   deleteCleanedHistory,
 } from "../services/api";
 
@@ -60,6 +63,7 @@ function formatTime(date) {
 }
 
 export default function DataCleaning() {
+  const navigate = useNavigate();
   const [isLoading, setIsLoading] = useState(true);
   const [uploadedData, setUploadedData] = useState([]);
   const [cleaningStats, setCleaningStats] = useState(null);
@@ -74,6 +78,8 @@ export default function DataCleaning() {
   const [cleanedDatasets, setCleanedDatasets] = useState([]);
   const [downloadingId, setDownloadingId] = useState(null);
   const [downloadingAll, setDownloadingAll] = useState(false);
+  const [visualizingId, setVisualizingId] = useState(null);
+  const [savingId, setSavingId] = useState(null);
   const [deletingHistory, setDeletingHistory] = useState(false);
   const [comparisonData, setComparisonData] = useState(null);
   const [comparisonLoading, setComparisonLoading] = useState(false);
@@ -82,6 +88,51 @@ export default function DataCleaning() {
 
   const activeRunRef = useRef(0);
   const streamAbortRef = useRef(null);
+
+  const handleVisualizeCleanedDataset = async (cleanedDataId) => {
+    if (!cleanedDataId) return;
+    if (visualizingId) return;
+    setVisualizingId(cleanedDataId);
+    try {
+      // Prefer database-backed visualization to avoid sessionStorage/file key issues.
+      navigate(`/visualizations?cleanedDataId=${encodeURIComponent(String(cleanedDataId))}`);
+    } catch (err) {
+      alert(err?.message || "Failed to visualize cleaned dataset file.");
+    } finally {
+      setVisualizingId(null);
+    }
+  };
+
+  const handleSaveCleanedDataset = async (cleanedDataId) => {
+    if (!cleanedDataId) return;
+    if (savingId) return;
+    setSavingId(cleanedDataId);
+    try {
+      const { blob, filename } = await downloadCleanedDataset(cleanedDataId, "json");
+      const text = await blob.text();
+      const parsed = JSON.parse(text);
+      const rows = Array.isArray(parsed) ? parsed : [];
+
+      const MAX_ROWS = 5000;
+      const trimmedRows = rows.slice(0, MAX_ROWS);
+      const columns = trimmedRows.length && typeof trimmedRows[0] === "object" && trimmedRows[0] != null
+        ? Object.keys(trimmedRows[0]).slice(0, 250)
+        : [];
+
+      const result = await saveCleanedDataset({
+        source_cleaned_data_id: Number(cleanedDataId),
+        filename,
+        columns,
+        rows: trimmedRows,
+      });
+
+      alert(result?.message ? `${result.message} (id ${result.saved_id})` : "Saved cleaned dataset.");
+    } catch (err) {
+      alert(err?.message || "Failed to save cleaned dataset.");
+    } finally {
+      setSavingId(null);
+    }
+  };
 
   const loadData = async () => {
     setIsLoading(true);
@@ -679,14 +730,61 @@ export default function DataCleaning() {
         ) : (
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
             {cleanedDatasets.map((item) => (
-              <div key={item.cleaned_data_id} className="rounded-lg border border-clay-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900/40">
-                <p className="text-sm font-semibold text-clay-900 dark:text-slate-100">
+              <div
+                key={item.cleaned_data_id}
+                className="rounded-lg border border-clay-200 bg-white p-3 transition hover:-translate-y-0.5 hover:bg-clay-50 dark:border-slate-700 dark:bg-slate-900/40 dark:hover:bg-slate-900/70"
+              >
+                <button
+                  type="button"
+                  onClick={() => handleVisualizeCleanedDataset(item.cleaned_data_id)}
+                  className="text-left"
+                >
+                  <p className="text-sm font-semibold text-clay-900 hover:underline dark:text-slate-100">
                   Raw #{item.raw_data_id} • {item.sector_label}
-                </p>
+                  </p>
+                </button>
                 <p className="mt-1 text-xs text-clay-600 dark:text-slate-400">
                   {item.row_count?.toLocaleString?.() ?? item.row_count} rows • {item.column_count} columns • quality {Math.round((item.quality_score || 0) * 100)}%
                 </p>
                 <div className="mt-3 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleVisualizeCleanedDataset(item.cleaned_data_id)}
+                    disabled={Boolean(visualizingId)}
+                    className="inline-flex items-center gap-1 rounded-md border border-clay-300 px-3 py-1.5 text-xs font-semibold text-clay-700 hover:bg-clay-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+                  >
+                    {visualizingId === item.cleaned_data_id ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        Loading
+                      </>
+                    ) : (
+                      <>
+                        <BarChart3 className="h-3.5 w-3.5" />
+                        Visualize
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleSaveCleanedDataset(item.cleaned_data_id)}
+                    disabled={Boolean(savingId)}
+                    className="inline-flex items-center gap-1 rounded-md bg-teal-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-700 disabled:opacity-60"
+                  >
+                    {savingId === item.cleaned_data_id ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        Saving
+                      </>
+                    ) : (
+                      <>
+                        <Database className="h-3.5 w-3.5" />
+                        Save
+                      </>
+                    )}
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => handleDownload(item.cleaned_data_id, "csv")}
