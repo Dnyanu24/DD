@@ -1,0 +1,94 @@
+Sector_Name,Month,Revenue_Lakhs,Growth_%,Employees_Count,Customer_Score,Operational_Status,Notes,Misc_Data
+IT,Feb,Unknown,18.15,182,4.43,Average,System upgrade phase,Data pending
+Healthcare,Mar,Unknown,3.47,450,4.07,High seasonal demand,Data pending
+Apr,75,9.43,246,Good,Performance stable,6954
+IT,Nov,179,197,Critical,Cost optimization ongoing
+IT,Jun,97,16.94,N/A,Excellent,Performance stable,Data pending
+Manufacturing,May,254,11.22,330,4.46,Excellent,Minor financial fluctuation,3273
+Healthcare,Apr,59,8.35,N/A,3.67,Excellent,High seasonal demand
+Healthcare,May,351,16.99,288,Minor financial fluctuation,3371
+IT,May,298,387,4.36,Average,Performance stable,4396
+Manufacturing,Jul,Unknown,14.86,393,4.9,Good,Minor financial fluctuation,4138
+Retail,Jul,328,6.1,158,4.69,Critical,Performance stable,Data pending
+Apr,391,13.85,180,4.27,Good,Minor financial fluctuation,88.7
+Manufacturing,Jan,236,7.31,497,4.57,Average,Minor financial fluctuation,Check manually
+Healthcare,Apr,381,257,4.53,Performance stable,Check manually
+Banking,Nov,113,14.32,165,4.52,Critical,Cost optimization ongoing,30.9
+Retail,Aug,256,4.09,N/A,3.53,Average,Expansion in progress
+Banking,May,295,10.38,484,3.83,Average,Minor financial fluctuation,62
+Banking,Sep,339,10.08,N/A,3.78,Cost optimization ongoing,86.7
+Manufacturing,Nov,Unknown,5.95,267,Average,Expansion in progress,Check manually
+Manufacturing,Jun,70,16.99,459,4.26,Average,Performance stable,Check manually
+IT,Apr,294,497,4.55,System upgrade phase,65
+Banking,Nov,140,11.15,428,4.14,Average,High seasonal demand,Check manually
+Banking,Jan,81,16.02,186,4.61,Average,Cost optimization ongoing,98.2
+Manufacturing,Sep,388,424,4.13,Average,High seasonal demand
+Retail,Mar,357,317,3.75,Good,Check manually
+IT,Apr,143,267,4.59,Average,Expansion in progress,Data pending
+Retail,Dec,73,12.87,153,4.38,Critical,System upgrade phase,6776
+Banking,Dec,141,2.6,201,4.99,Excellent,Expansion in progress,Data pending
+Healthcare,Dec,352,2.11,401,Critical,System upgrade phase,5837
+Retail,Apr,172,12.44,N/A,Excellent,Expansion in progress,Check manually
+Sep,364,17.75,132,3.88,Excellent,Cost optimization ongoing,8594
+Retail,Apr,87,18.54,496,4.37,Critical,Expansion in progress,Data pending
+Retail,Sep,111,396,Excellent,Cost optimization ongoing,Data pending
+Healthcare,Oct,365,14.54,438,4.54,Minor financial fluctuation,8298
+Healthcare,Mar,58,19.05,399,4.8,Critical,System upgrade phase
+Healthcare,Feb,276,4.69,180,4.28,Excellent,Performance stable,98.1
+Banking,Jul,136,2.12,92,3.92,Good,Performance stable,3172
+Retail,Aug,67,12.48,497,Critical,Expansion in progress,6808
+Manufacturing,Jun,396,18.65,357,Good,Check manually
+IT,Sep,168,8.13,445,Performance stable,Data pending
+Healthcare,Sep,300,6.36,491,4.17,Excellent,High seasonal demand,Check manually
+Retail,Oct,275,3.65,349,3.97,Excellent,Cost optimization ongoing,17.6
+Healthcare,Jan,103,19.36,194,4.09,Excellent,Minor financial fluctuation,Data pending
+Manufacturing,Aug,123,18.94,180,4.64,Excellent,High seasonal demand,Check manually
+Dec,112,5.57,166,4.93,Minor financial fluctuation,Data pending
+Healthcare,Jan,93,5.98,337,3.83,Average,High seasonal demand,Data pending
+Healthcare,Sep,Unknown,9.32,367,4.48,Critical
+Healthcare,Dec,Unknown,479,Average,Expansion in progress,Check manually
+May,Unknown,2.04,370,4.19,Critical,Expansion in progress,Check manually
+IT,Sep,328,427,4.71,Good,Performance stable,Check manually
+Retail,Apr,76,18.49,102,4.68,Check manually
+Manufacturing,Feb,287,4.68,238,4.58,Average,Minor financial fluctuation,Data pending
+Retail,Jul,78,12.37,147,3.79,Average,Expansion in progress,Data pending
+Healthcare,May,326,16.19,193,3.67,Good,Cost optimization ongoing
+Healthcare,Jul,159,8.59,357,4.59,Critical,Minor financial fluctuation
+Banking,Nov,329,16.97,485,4.19,Average,Performance stable,2726
+Banking,Sep,283,182,5,Excellent,4501
+Banking,Jan,111,14.56,117,Critical,Cost optimization ongoing,95.2
+Jul,171,4.62,381,4.45,Good,System upgrade phase,Data pending
+Healthcare,Nov,178,13.33,130,Good,Data pending
+Manufacturing,Mar,280,13.87,137,4.98,Good,10.4
+Healthcare,Sep,309,498,4.59,Critical,Expansion in progress,Data pending
+Retail,Apr,302,10.1,367,4.39,Excellent,System upgrade phase,9490
+Retail,Nov,52,11.93,471,4.38,Average,High seasonal demand,Check manually
+Retail,Oct,384,330,4.49,Cost optimization ongoing
+Banking,Sep,Unknown,8.18,387,93.1
+Manufacturing,Jul,Unknown,272,3.87,Average,Minor financial fluctuation
+IT,Dec,345,5.04,148,4.05,Good,High seasonal demand,Data pending
+Banking,Sep,185,18.93,437,3.53,Average,System upgrade phase,86
+Retail,Apr,342,422,4.19,Performance stable,Data pending
+Manufacturing,Oct,335,3.56,158,4.97,Good,Expansion in progress
+Manufacturing,Apr,375,10.26,183,4.79,Average,Performance stable,6997
+Manufacturing,Jul,58,11.67,159,3.72,Critical,Performance stable
+Oct,95,14.62,383,3.76,Critical,High seasonal demand,Data pending
+Manufacturing,Aug,192,13.56,478,4.43,Expansion in progress,Check manually
+Manufacturing,Aug,70,467,4.71,Excellent,Expansion in progress,Check manually
+Banking,Nov,391,13.99,492,5,Performance stable
+Mar,255,5.34,301,3.94,Critical,High seasonal demand
+Manufacturing,Jul,241,14.09,246,3.62,Excellent,Expansion in progress
+Healthcare,Oct,247,7.25,334,4.32,Critical,Expansion in progress,Check manually
+IT,Sep,93,5.49,N/A,3.96,Good,Minor financial fluctuation,Data pending
+Jun,Unknown,12.16,168,Average,Expansion in progress,64.7
+Retail,Nov,Unknown,15.02,100,4.31,Critical,Data pending
+Retail,Dec,131,5.61,429,4.04,Good,4262
+Banking,Aug,295,7.32,310,Critical,Cost optimization ongoing,Check manually
+Retail,May,222,6.17,404,4.48,Excellent,System upgrade phase,Check manually
+Healthcare,Mar,270,15.9,138,4.76,Average,Cost optimization ongoing,Data pending
+Banking,Feb,136,14.72,256,Good,Check manually
+Manufacturing,Mar,320,10.52,92,3.75,Average,Cost optimization ongoing,8233
+Retail,May,336,16.54,N/A,3.74,Critical,High seasonal demand,Check manually
+Banking,Jan,279,119,4.44,Critical,Expansion in progress
+Healthcare,May,233,491,72
+Banking,Oct,278,4.52,385,4.99,Excellent,System upgrade phase,Data pendin
