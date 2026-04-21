@@ -1,0 +1,817 @@
+{
+  "input_preview": [
+    {
+      "ID": 1,
+      "Name": "ABC Corp",
+      "Sector": "IT",
+      "Sales": 120000.0,
+      "Profit": null,
+      "Employees": 50.0,
+      "Region": "West"
+    },
+    {
+      "ID": 2,
+      "Name": "HealthPlus",
+      "Sector": "Healthcare",
+      "Sales": 85000.0,
+      "Profit": 12000.0,
+      "Employees": null,
+      "Region": "North"
+    },
+    {
+      "ID": 3,
+      "Name": "AgroFarm",
+      "Sector": null,
+      "Sales": 60000.0,
+      "Profit": 8000.0,
+      "Employees": 30.0,
+      "Region": "East"
+    },
+    {
+      "ID": 4,
+      "Name": "FinServe",
+      "Sector": "Finance",
+      "Sales": 150000.0,
+      "Profit": null,
+      "Employees": 70.0,
+      "Region": null
+    },
+    {
+      "ID": 5,
+      "Name": "TechNova",
+      "Sector": "IT",
+      "Sales": null,
+      "Profit": 15000.0,
+      "Employees": 45.0,
+      "Region": "West"
+    },
+    {
+      "ID": 6,
+      "Name": "MedLife",
+      "Sector": "Healthcare",
+      "Sales": 90000.0,
+      "Profit": 11000.0,
+      "Employees": 40.0,
+      "Region": "South"
+    },
+    {
+      "ID": 7,
+      "Name": "GreenGrow",
+      "Sector": "Agriculture",
+      "Sales": 50000.0,
+      "Profit": null,
+      "Employees": 25.0,
+      "Region": "East"
+    },
+    {
+      "ID": 8,
+      "Name": "SafeBank",
+      "Sector": "Finance",
+      "Sales": 130000.0,
+      "Profit": 20000.0,
+      "Employees": null,
+      "Region": "North"
+    },
+    {
+      "ID": 9,
+      "Name": "InnoTech",
+      "Sector": "IT",
+      "Sales": 140000.0,
+      "Profit": 18000.0,
+      "Employees": 60.0,
+      "Region": null
+    },
+    {
+      "ID": 10,
+      "Name": "CityCare",
+      "Sector": "Healthcare",
+      "Sales": null,
+      "Profit": 9000.0,
+      "Employees": 35.0,
+      "Region": "West"
+    },
+    {
+      "ID": 11,
+      "Name": "AgriPro",
+      "Sector": "Agriculture",
+      "Sales": 55000.0,
+      "Profit": 7000.0,
+      "Employees": null,
+      "Region": "South"
+    },
+    {
+      "ID": 12,
+      "Name": "MoneyMatters",
+      "Sector": "Finance",
+      "Sales": 125000.0,
+      "Profit": null,
+      "Employees": 55.0,
+      "Region": "East"
+    },
+    {
+      "ID": 13,
+      "Name": "NextGen",
+      "Sector": "IT",
+      "Sales": 135000.0,
+      "Profit": 17000.0,
+      "Employees": 50.0,
+      "Region": "North"
+    },
+    {
+      "ID": 14,
+      "Name": "Wellness",
+      "Sector": "Healthcare",
+      "Sales": 80000.0,
+      "Profit": null,
+      "Employees": 30.0,
+      "Region": null
+    },
+    {
+      "ID": 15,
+      "Name": "FarmFresh",
+      "Sector": "Agriculture",
+      "Sales": null,
+      "Profit": 6000.0,
+      "Employees": 20.0,
+      "Region": "West"
+    },
+    {
+      "ID": 16,
+      "Name": "SecureFin",
+      "Sector": "Finance",
+      "Sales": 145000.0,
+      "Profit": 21000.0,
+      "Employees": 65.0,
+      "Region": "South"
+    },
+    {
+      "ID": 17,
+      "Name": "CodeBase",
+      "Sector": "IT",
+      "Sales": 155000.0,
+      "Profit": null,
+      "Employees": 70.0,
+      "Region": "East"
+    },
+    {
+      "ID": 18,
+      "Name": "LifeCare",
+      "Sector": "Healthcare",
+      "Sales": 95000.0,
+      "Profit": 13000.0,
+      "Employees": null,
+      "Region": "North"
+    },
+    {
+      "ID": 19,
+      "Name": "AgroTech",
+      "Sector": "Agriculture",
+      "Sales": 52000.0,
+      "Profit": null,
+      "Employees": 22.0,
+      "Region": "West"
+    },
+    {
+      "ID": 20,
+      "Name": "FinEdge",
+      "Sector": "Finance",
+      "Sales": null,
+      "Profit": 19000.0,
+      "Employees": 60.0,
+      "Region": "South"
+    }
+  ],
+  "normal_mean_preview": [
+    {
+      "ID": 1,
+      "Name": "ABC Corp",
+      "Sector": "IT",
+      "Sales": 120000.0,
+      "Profit": 14131.5789473684,
+      "Employees": 50.0,
+      "Region": "West"
+    },
+    {
+      "ID": 2,
+      "Name": "HealthPlus",
+      "Sector": "Healthcare",
+      "Sales": 85000.0,
+      "Profit": 12000.0,
+      "Employees": 45.6956521739,
+      "Region": "North"
+    },
+    {
+      "ID": 3,
+      "Name": "AgroFarm",
+      "Sector": "Healthcare",
+      "Sales": 60000.0,
+      "Profit": 8000.0,
+      "Employees": 30.0,
+      "Region": "East"
+    },
+    {
+      "ID": 4,
+      "Name": "FinServe",
+      "Sector": "Finance",
+      "Sales": 150000.0,
+      "Profit": 14131.5789473684,
+      "Employees": 70.0,
+      "Region": "East"
+    },
+    {
+      "ID": 5,
+      "Name": "TechNova",
+      "Sector": "IT",
+      "Sales": 107458.3333333333,
+      "Profit": 15000.0,
+      "Employees": 45.0,
+      "Region": "West"
+    },
+    {
+      "ID": 6,
+      "Name": "MedLife",
+      "Sector": "Healthcare",
+      "Sales": 90000.0,
+      "Profit": 11000.0,
+      "Employees": 40.0,
+      "Region": "South"
+    },
+    {
+      "ID": 7,
+      "Name": "GreenGrow",
+      "Sector": "Agriculture",
+      "Sales": 50000.0,
+      "Profit": 14131.5789473684,
+      "Employees": 25.0,
+      "Region": "East"
+    },
+    {
+      "ID": 8,
+      "Name": "SafeBank",
+      "Sector": "Finance",
+      "Sales": 130000.0,
+      "Profit": 20000.0,
+      "Employees": 45.6956521739,
+      "Region": "North"
+    },
+    {
+      "ID": 9,
+      "Name": "InnoTech",
+      "Sector": "IT",
+      "Sales": 140000.0,
+      "Profit": 18000.0,
+      "Employees": 60.0,
+      "Region": "East"
+    },
+    {
+      "ID": 10,
+      "Name": "CityCare",
+      "Sector": "Healthcare",
+      "Sales": 107458.3333333333,
+      "Profit": 9000.0,
+      "Employees": 35.0,
+      "Region": "West"
+    },
+    {
+      "ID": 11,
+      "Name": "AgriPro",
+      "Sector": "Agriculture",
+      "Sales": 55000.0,
+      "Profit": 7000.0,
+      "Employees": 45.6956521739,
+      "Region": "South"
+    },
+    {
+      "ID": 12,
+      "Name": "MoneyMatters",
+      "Sector": "Finance",
+      "Sales": 125000.0,
+      "Profit": 14131.5789473684,
+      "Employees": 55.0,
+      "Region": "East"
+    },
+    {
+      "ID": 13,
+      "Name": "NextGen",
+      "Sector": "IT",
+      "Sales": 135000.0,
+      "Profit": 17000.0,
+      "Employees": 50.0,
+      "Region": "North"
+    },
+    {
+      "ID": 14,
+      "Name": "Wellness",
+      "Sector": "Healthcare",
+      "Sales": 80000.0,
+      "Profit": 14131.5789473684,
+      "Employees": 30.0,
+      "Region": "East"
+    },
+    {
+      "ID": 15,
+      "Name": "FarmFresh",
+      "Sector": "Agriculture",
+      "Sales": 107458.3333333333,
+      "Profit": 6000.0,
+      "Employees": 20.0,
+      "Region": "West"
+    },
+    {
+      "ID": 16,
+      "Name": "SecureFin",
+      "Sector": "Finance",
+      "Sales": 145000.0,
+      "Profit": 21000.0,
+      "Employees": 65.0,
+      "Region": "South"
+    },
+    {
+      "ID": 17,
+      "Name": "CodeBase",
+      "Sector": "IT",
+      "Sales": 155000.0,
+      "Profit": 14131.5789473684,
+      "Employees": 70.0,
+      "Region": "East"
+    },
+    {
+      "ID": 18,
+      "Name": "LifeCare",
+      "Sector": "Healthcare",
+      "Sales": 95000.0,
+      "Profit": 13000.0,
+      "Employees": 45.6956521739,
+      "Region": "North"
+    },
+    {
+      "ID": 19,
+      "Name": "AgroTech",
+      "Sector": "Agriculture",
+      "Sales": 52000.0,
+      "Profit": 14131.5789473684,
+      "Employees": 22.0,
+      "Region": "West"
+    },
+    {
+      "ID": 20,
+      "Name": "FinEdge",
+      "Sector": "Finance",
+      "Sales": 107458.3333333333,
+      "Profit": 19000.0,
+      "Employees": 60.0,
+      "Region": "South"
+    }
+  ],
+  "normal_median_preview": [
+    {
+      "ID": 1,
+      "Name": "ABC Corp",
+      "Sector": "IT",
+      "Sales": 120000.0,
+      "Profit": 13000.0,
+      "Employees": 50.0,
+      "Region": "West"
+    },
+    {
+      "ID": 2,
+      "Name": "HealthPlus",
+      "Sector": "Healthcare",
+      "Sales": 85000.0,
+      "Profit": 12000.0,
+      "Employees": 45.0,
+      "Region": "North"
+    },
+    {
+      "ID": 3,
+      "Name": "AgroFarm",
+      "Sector": "Healthcare",
+      "Sales": 60000.0,
+      "Profit": 8000.0,
+      "Employees": 30.0,
+      "Region": "East"
+    },
+    {
+      "ID": 4,
+      "Name": "FinServe",
+      "Sector": "Finance",
+      "Sales": 150000.0,
+      "Profit": 13000.0,
+      "Employees": 70.0,
+      "Region": "East"
+    },
+    {
+      "ID": 5,
+      "Name": "TechNova",
+      "Sector": "IT",
+      "Sales": 107500.0,
+      "Profit": 15000.0,
+      "Employees": 45.0,
+      "Region": "West"
+    },
+    {
+      "ID": 6,
+      "Name": "MedLife",
+      "Sector": "Healthcare",
+      "Sales": 90000.0,
+      "Profit": 11000.0,
+      "Employees": 40.0,
+      "Region": "South"
+    },
+    {
+      "ID": 7,
+      "Name": "GreenGrow",
+      "Sector": "Agriculture",
+      "Sales": 50000.0,
+      "Profit": 13000.0,
+      "Employees": 25.0,
+      "Region": "East"
+    },
+    {
+      "ID": 8,
+      "Name": "SafeBank",
+      "Sector": "Finance",
+      "Sales": 130000.0,
+      "Profit": 20000.0,
+      "Employees": 45.0,
+      "Region": "North"
+    },
+    {
+      "ID": 9,
+      "Name": "InnoTech",
+      "Sector": "IT",
+      "Sales": 140000.0,
+      "Profit": 18000.0,
+      "Employees": 60.0,
+      "Region": "East"
+    },
+    {
+      "ID": 10,
+      "Name": "CityCare",
+      "Sector": "Healthcare",
+      "Sales": 107500.0,
+      "Profit": 9000.0,
+      "Employees": 35.0,
+      "Region": "West"
+    },
+    {
+      "ID": 11,
+      "Name": "AgriPro",
+      "Sector": "Agriculture",
+      "Sales": 55000.0,
+      "Profit": 7000.0,
+      "Employees": 45.0,
+      "Region": "South"
+    },
+    {
+      "ID": 12,
+      "Name": "MoneyMatters",
+      "Sector": "Finance",
+      "Sales": 125000.0,
+      "Profit": 13000.0,
+      "Employees": 55.0,
+      "Region": "East"
+    },
+    {
+      "ID": 13,
+      "Name": "NextGen",
+      "Sector": "IT",
+      "Sales": 135000.0,
+      "Profit": 17000.0,
+      "Employees": 50.0,
+      "Region": "North"
+    },
+    {
+      "ID": 14,
+      "Name": "Wellness",
+      "Sector": "Healthcare",
+      "Sales": 80000.0,
+      "Profit": 13000.0,
+      "Employees": 30.0,
+      "Region": "East"
+    },
+    {
+      "ID": 15,
+      "Name": "FarmFresh",
+      "Sector": "Agriculture",
+      "Sales": 107500.0,
+      "Profit": 6000.0,
+      "Employees": 20.0,
+      "Region": "West"
+    },
+    {
+      "ID": 16,
+      "Name": "SecureFin",
+      "Sector": "Finance",
+      "Sales": 145000.0,
+      "Profit": 21000.0,
+      "Employees": 65.0,
+      "Region": "South"
+    },
+    {
+      "ID": 17,
+      "Name": "CodeBase",
+      "Sector": "IT",
+      "Sales": 155000.0,
+      "Profit": 13000.0,
+      "Employees": 70.0,
+      "Region": "East"
+    },
+    {
+      "ID": 18,
+      "Name": "LifeCare",
+      "Sector": "Healthcare",
+      "Sales": 95000.0,
+      "Profit": 13000.0,
+      "Employees": 45.0,
+      "Region": "North"
+    },
+    {
+      "ID": 19,
+      "Name": "AgroTech",
+      "Sector": "Agriculture",
+      "Sales": 52000.0,
+      "Profit": 13000.0,
+      "Employees": 22.0,
+      "Region": "West"
+    },
+    {
+      "ID": 20,
+      "Name": "FinEdge",
+      "Sector": "Finance",
+      "Sales": 107500.0,
+      "Profit": 19000.0,
+      "Employees": 60.0,
+      "Region": "South"
+    }
+  ],
+  "predictive_preview": [
+    {
+      "ID": 1,
+      "Name": "ABC Corp",
+      "Sector": "IT",
+      "Sales": 120000.0,
+      "Profit": 18200.0,
+      "Employees": 50.0,
+      "Region": "West"
+    },
+    {
+      "ID": 2,
+      "Name": "HealthPlus",
+      "Sector": "Healthcare",
+      "Sales": 85000.0,
+      "Profit": 12000.0,
+      "Employees": 37.2,
+      "Region": "North"
+    },
+    {
+      "ID": 3,
+      "Name": "AgroFarm",
+      "Sector": "Healthcare",
+      "Sales": 60000.0,
+      "Profit": 8000.0,
+      "Employees": 30.0,
+      "Region": "East"
+    },
+    {
+      "ID": 4,
+      "Name": "FinServe",
+      "Sector": "Finance",
+      "Sales": 150000.0,
+      "Profit": 20100.0,
+      "Employees": 70.0,
+      "Region": "East"
+    },
+    {
+      "ID": 5,
+      "Name": "TechNova",
+      "Sector": "IT",
+      "Sales": 104470.4108170769,
+      "Profit": 15000.0,
+      "Employees": 45.0,
+      "Region": "West"
+    },
+    {
+      "ID": 6,
+      "Name": "MedLife",
+      "Sector": "Healthcare",
+      "Sales": 90000.0,
+      "Profit": 11000.0,
+      "Employees": 40.0,
+      "Region": "South"
+    },
+    {
+      "ID": 7,
+      "Name": "GreenGrow",
+      "Sector": "Agriculture",
+      "Sales": 50000.0,
+      "Profit": 8300.0,
+      "Employees": 25.0,
+      "Region": "East"
+    },
+    {
+      "ID": 8,
+      "Name": "SafeBank",
+      "Sector": "Finance",
+      "Sales": 130000.0,
+      "Profit": 20000.0,
+      "Employees": 54.6,
+      "Region": "North"
+    },
+    {
+      "ID": 9,
+      "Name": "InnoTech",
+      "Sector": "IT",
+      "Sales": 140000.0,
+      "Profit": 18000.0,
+      "Employees": 60.0,
+      "Region": "East"
+    },
+    {
+      "ID": 10,
+      "Name": "CityCare",
+      "Sector": "Healthcare",
+      "Sales": 62754.2262179456,
+      "Profit": 9000.0,
+      "Employees": 35.0,
+      "Region": "West"
+    },
+    {
+      "ID": 11,
+      "Name": "AgriPro",
+      "Sector": "Agriculture",
+      "Sales": 55000.0,
+      "Profit": 7000.0,
+      "Employees": 26.4,
+      "Region": "South"
+    },
+    {
+      "ID": 12,
+      "Name": "MoneyMatters",
+      "Sector": "Finance",
+      "Sales": 125000.0,
+      "Profit": 18200.0,
+      "Employees": 55.0,
+      "Region": "East"
+    },
+    {
+      "ID": 13,
+      "Name": "NextGen",
+      "Sector": "IT",
+      "Sales": 135000.0,
+      "Profit": 17000.0,
+      "Employees": 50.0,
+      "Region": "North"
+    },
+    {
+      "ID": 14,
+      "Name": "Wellness",
+      "Sector": "Healthcare",
+      "Sales": 80000.0,
+      "Profit": 10900.0,
+      "Employees": 30.0,
+      "Region": "East"
+    },
+    {
+      "ID": 15,
+      "Name": "FarmFresh",
+      "Sector": "Agriculture",
+      "Sales": 23734.6633995548,
+      "Profit": 6000.0,
+      "Employees": 20.0,
+      "Region": "West"
+    },
+    {
+      "ID": 16,
+      "Name": "SecureFin",
+      "Sector": "Finance",
+      "Sales": 145000.0,
+      "Profit": 21000.0,
+      "Employees": 65.0,
+      "Region": "South"
+    },
+    {
+      "ID": 17,
+      "Name": "CodeBase",
+      "Sector": "IT",
+      "Sales": 155000.0,
+      "Profit": 20500.0,
+      "Employees": 70.0,
+      "Region": "East"
+    },
+    {
+      "ID": 18,
+      "Name": "LifeCare",
+      "Sector": "Healthcare",
+      "Sales": 95000.0,
+      "Profit": 13000.0,
+      "Employees": 37.2,
+      "Region": "North"
+    },
+    {
+      "ID": 19,
+      "Name": "AgroTech",
+      "Sector": "Agriculture",
+      "Sales": 52000.0,
+      "Profit": 8300.0,
+      "Employees": 22.0,
+      "Region": "West"
+    },
+    {
+      "ID": 20,
+      "Name": "FinEdge",
+      "Sector": "Finance",
+      "Sales": 152869.1912340332,
+      "Profit": 19000.0,
+      "Employees": 60.0,
+      "Region": "South"
+    }
+  ],
+  "predictive_best_methods": [
+    {
+      "stage": "schema_detection",
+      "detected": {
+        "ID": "id",
+        "Name": "categorical",
+        "Sector": "categorical",
+        "Sales": "numeric",
+        "Profit": "numeric",
+        "Employees": "numeric",
+        "Region": "categorical"
+      }
+    },
+    {
+      "stage": "type_correction",
+      "actions": [
+        "Converted 'ID' to integer ID.",
+        "Converted 'Sales' to numeric.",
+        "Converted 'Profit' to numeric.",
+        "Converted 'Employees' to numeric."
+      ]
+    },
+    {
+      "stage": "dedupe",
+      "summary": [
+        "No duplicate rows removed."
+      ]
+    },
+    {
+      "stage": "text_standardization",
+      "summary": [
+        "No text columns to standardize."
+      ]
+    },
+    {
+      "stage": "parallel_imputation",
+      "best_method_by_column": {
+        "Sector": "mode",
+        "Sales": "regression",
+        "Profit": "knn",
+        "Employees": "knn",
+        "Region": "mode"
+      },
+      "scores_by_column": {
+        "Sector": {
+          "mode": 0.2
+        },
+        "Sales": {
+          "mean": -43535.660573,
+          "median": -46368.092477,
+          "knn": -48707.425854,
+          "regression": -24126.268998
+        },
+        "Profit": {},
+        "Employees": {
+          "mean": -16.557158,
+          "median": -20.713764,
+          "knn": -1.908193,
+          "regression": -3.031468
+        },
+        "Region": {
+          "mode": 0.0
+        }
+      }
+    },
+    {
+      "stage": "predictive_fill_fallback",
+      "before_missing_cells": 0,
+      "after_missing_cells": 0
+    },
+    {
+      "stage": "post_impute_cast",
+      "integer_columns": [
+        "ID"
+      ]
+    },
+    {
+      "stage": "validation",
+      "ok": true,
+      "warnings": [],
+      "stats": {
+        "rows": 30,
+        "columns": 7,
+        "missing_percent": 0.0
+      }
+    }
+  ]
+}

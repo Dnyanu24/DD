@@ -12,4 +12,6 @@ python-jose[cryptography]
 passlib[bcrypt]
 python-decouple
 statsmodels
+nltk==3.8.1
+textblob==0.17.1
 pymupdf

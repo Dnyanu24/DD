@@ -53,6 +53,34 @@ class User(Base):
     company = relationship("Company", back_populates="users")
     sector = relationship("Sector", back_populates="users")
     reviewed_requests = relationship("CompanyJoinRequest", back_populates="reviewer")
+    profile = relationship("UserProfile", back_populates="user", uselist=False)
+    password_reset_tokens = relationship("PasswordResetToken", back_populates="user")
+
+
+class UserProfile(Base):
+    __tablename__ = "user_profiles"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users_roles.id"), unique=True, nullable=False)
+    display_name = Column(String(255), nullable=True)
+    email = Column(String(255), nullable=True, index=True)
+    bio = Column(Text, nullable=True)
+    avatar_filename = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="profile")
+
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users_roles.id"), nullable=False, index=True)
+    token_hash = Column(String(128), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    used_at = Column(DateTime, nullable=True)
+
+    user = relationship("User", back_populates="password_reset_tokens")
 
 
 class CompanyJoinRequest(Base):
@@ -84,6 +112,21 @@ class RawData(Base):
 
     sector = relationship("Sector", back_populates="raw_data")
     cleaned_data = relationship("CleanedData", back_populates="raw_data")
+    extracted_datasets = relationship("ExtractedDataset", back_populates="raw_data", cascade="all, delete-orphan")
+
+
+class ExtractedDataset(Base):
+    __tablename__ = "extracted_datasets"
+    id = Column(Integer, primary_key=True, index=True)
+    raw_data_id = Column(Integer, ForeignKey("raw_data.id"), nullable=False, index=True)
+    name = Column(String(255), nullable=False)  # invoice/products/customer/payment/table_*
+    dataset_type = Column(String(255), nullable=False, default="table")
+    data = Column(JSON, nullable=False)  # CSV-ready rows (list[dict])
+    schema = Column(JSON, nullable=True)
+    avg_record_confidence = Column(Float, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    raw_data = relationship("RawData", back_populates="extracted_datasets")
 
 # Cleaned Data Model
 class CleanedData(Base):
@@ -182,80 +225,59 @@ class UserSetting(Base):
     updated_at = Column(DateTime, default=datetime.utcnow)
 
 
-class SavedCleanedDataset(Base):
-    __tablename__ = "saved_cleaned_datasets"
-    id = Column(Integer, primary_key=True, index=True)
-    company_id = Column(Integer, ForeignKey("companies.id"), nullable=False)
-    created_by = Column(Integer, ForeignKey("users_roles.id"), nullable=False)
-    source_cleaned_data_id = Column(Integer, ForeignKey("cleaned_data.id"), nullable=True)
-    filename = Column(String(255), nullable=True)
-    columns = Column(JSON, nullable=False, default=list)
-    row_count = Column(Integer, nullable=False, default=0)
-    data = Column(JSON, nullable=False)  # Preview rows stored for later visualization
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-
-class UserProfile(Base):
-    __tablename__ = "user_profiles"
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users_roles.id"), unique=True, nullable=False)
-    display_name = Column(String(255), nullable=True)
-    email = Column(String(255), nullable=True)
-    bio = Column(Text, nullable=True)
-    avatar_filename = Column(String(255), nullable=True)
-    updated_at = Column(DateTime, default=datetime.utcnow)
-
-
-class PasswordResetToken(Base):
-    __tablename__ = "password_reset_tokens"
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users_roles.id"), nullable=False)
-    token_hash = Column(String(128), nullable=False, index=True)
-    expires_at = Column(DateTime, nullable=False)
-    used_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-
 class PipelineIterationLog(Base):
     __tablename__ = "pipeline_iteration_logs"
     id = Column(Integer, primary_key=True, index=True)
-    company_id = Column(Integer, ForeignKey("companies.id"), nullable=False)
-    sector_id = Column(Integer, ForeignKey("sectors.id"), nullable=True)
-    task = Column(String(64), nullable=False)  # e.g. risk_prediction
-    run_key = Column(String(128), nullable=False)  # groups related iterations
+    company_id = Column(Integer, ForeignKey("companies.id"), nullable=False, index=True)
+    sector_id = Column(Integer, ForeignKey("sectors.id"), nullable=True, index=True)
+    task = Column(String(100), nullable=False, index=True)
+    run_key = Column(String(255), nullable=False, index=True)
     iteration = Column(Integer, nullable=False, default=0)
-    status = Column(String(32), nullable=False, default="completed")  # completed | stopped | error
+    status = Column(String(30), nullable=False, default="completed", index=True)
     metrics = Column(JSON, nullable=False, default=dict)
     previous_metrics = Column(JSON, nullable=True)
     dataset_stats = Column(JSON, nullable=False, default=dict)
     cleaning_config = Column(JSON, nullable=False, default=dict)
     root_cause = Column(JSON, nullable=False, default=dict)
     notes = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class SavedCleanedDataset(Base):
+    __tablename__ = "saved_cleaned_datasets"
+    id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(Integer, ForeignKey("companies.id"), nullable=False, index=True)
+    created_by = Column(Integer, ForeignKey("users_roles.id"), nullable=False, index=True)
+    source_cleaned_data_id = Column(Integer, ForeignKey("cleaned_data.id"), nullable=True, index=True)
+    filename = Column(String(255), nullable=True)
+    columns = Column(JSON, nullable=False, default=list)
+    row_count = Column(Integer, nullable=False, default=0)
+    data = Column(JSON, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 
 class MetaLearningExperience(Base):
-    """
-    Stores dataset metadata/embedding and the best-performing pipeline/model config discovered for it.
-
-    This acts as a lightweight "config store" knowledge base:
-      (dataset_features/embedding) -> best_config (+ best_model + metrics)
-    """
-
     __tablename__ = "meta_learning_experiences"
     id = Column(Integer, primary_key=True, index=True)
-    company_id = Column(Integer, ForeignKey("companies.id"), nullable=False)
-    sector_id = Column(Integer, ForeignKey("sectors.id"), nullable=True)
-
+    company_id = Column(Integer, ForeignKey("companies.id"), nullable=False, index=True)
+    sector_id = Column(Integer, ForeignKey("sectors.id"), nullable=True, index=True)
     dataset_features = Column(JSON, nullable=False, default=dict)
-    embedding = Column(JSON, nullable=False, default=list)  # list[float]
-
+    embedding = Column(JSON, nullable=False, default=list)
     best_config = Column(JSON, nullable=False, default=dict)
     best_model = Column(JSON, nullable=False, default=dict)
     best_metrics = Column(JSON, nullable=False, default=dict)
+    source_cleaned_data_id = Column(Integer, ForeignKey("cleaned_data.id"), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
-    source_cleaned_data_id = Column(Integer, ForeignKey("cleaned_data.id"), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+
+class SectorClassificationProfile(Base):
+    __tablename__ = "sector_classification_profiles"
+    id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(Integer, ForeignKey("companies.id"), nullable=False, index=True)
+    sector = Column(String(60), nullable=False, index=True)
+    keywords = Column(JSON, nullable=False, default=list)
+    samples = Column(Integer, nullable=False, default=0)
+    updated_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 # Partitioning for RawData by sector and time
 partition_by_sector_time = DDL("""
@@ -271,28 +293,50 @@ Index('idx_cleaned_raw', CleanedData.raw_data_id)
 Index('idx_prediction_sector', AIPrediction.sector_id)
 Index('idx_feedback_user', FeedbackLog.user_id)
 Index('idx_quality_cleaned', DataQualityScore.cleaned_data_id)
-Index('idx_saved_cleaned_company', SavedCleanedDataset.company_id, SavedCleanedDataset.created_at)
-Index('idx_profile_user', UserProfile.user_id)
-Index('idx_pwreset_user', PasswordResetToken.user_id, PasswordResetToken.created_at)
-Index('idx_pipeline_iter', PipelineIterationLog.company_id, PipelineIterationLog.task, PipelineIterationLog.created_at)
-Index('idx_meta_exp_company', MetaLearningExperience.company_id, MetaLearningExperience.created_at)
-Index('idx_meta_exp_sector', MetaLearningExperience.company_id, MetaLearningExperience.sector_id, MetaLearningExperience.created_at)
 
-
-class SectorClassificationProfile(Base):
-    """
-    Meta-learning store for sector classification patterns (keywords learned per company/sector).
-    """
-
-    __tablename__ = "sector_classification_profiles"
+class ClusteringResult(Base):
+    __tablename__ = "clustering_results"
     id = Column(Integer, primary_key=True, index=True)
-    company_id = Column(Integer, ForeignKey("companies.id"), nullable=False)
-    sector = Column(String(64), nullable=False)
-    keywords = Column(JSON, nullable=False, default=list)  # list[str]
-    samples = Column(Integer, nullable=False, default=0)
-    updated_at = Column(DateTime, default=datetime.utcnow)
+    cleaned_data_id = Column(Integer, ForeignKey("cleaned_data.id"), nullable=False)
+    cluster_labels = Column(JSON, nullable=False)
+    cluster_centroids = Column(JSON, nullable=True)
+    silhouette_score = Column(Float)
+    n_clusters = Column(Integer)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    cleaned_data = relationship("CleanedData", back_populates="clustering_results")
 
-Index('idx_sector_profile_company', SectorClassificationProfile.company_id, SectorClassificationProfile.updated_at)
-Index('idx_sector_profile_unique', SectorClassificationProfile.company_id, SectorClassificationProfile.sector)
+class ClassificationResult(Base):
+    __tablename__ = "classification_results"
+    id = Column(Integer, primary_key=True, index=True)
+    cleaned_data_id = Column(Integer, ForeignKey("cleaned_data.id"), nullable=False)
+    product_class = Column(String(100))
+    sector_class = Column(String(60))
+    hierarchical_level1 = Column(String(100))
+    hierarchical_level2 = Column(String(100))
+    hierarchical_level3 = Column(String(100))
+    confidence_product = Column(Float)
+    confidence_sector = Column(Float)
+    confidence_hierarchical = Column(Float)
+    source_method = Column(String(50))  # rule/ml/fusion
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    cleaned_data = relationship("CleanedData", back_populates="classification_results")
+
+class FeedbackIteration(Base):
+    __tablename__ = "feedback_iterations"
+    id = Column(Integer, primary_key=True, index=True)
+    cleaned_data_id = Column(Integer, ForeignKey("cleaned_data.id"), nullable=True)
+    iteration = Column(Integer, nullable=False)
+    confidence_weights = Column(JSON, default=dict)
+    validation_errors = Column(JSON, default=dict)
+    feedback_applied = Column(JSON, nullable=False)
+    improved_score = Column(Float)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    cleaned_data = relationship("CleanedData", back_populates="feedback_iterations")
+
+# Back-populate new relationships
+CleanedData.clustering_results = relationship("ClusteringResult", back_populates="cleaned_data", cascade="all, delete-orphan")
+CleanedData.classification_results = relationship("ClassificationResult", back_populates="cleaned_data", cascade="all, delete-orphan")
+CleanedData.feedback_iterations = relationship("FeedbackIteration", back_populates="cleaned_data", cascade="all, delete-orphan")

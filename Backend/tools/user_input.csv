@@ -1,0 +1,21 @@
+ID,Name,Sector,Sales,Profit,Employee,Region
+1,ABC Corp,IT,120000,16000,50,West
+2,HealthPlus,Healthcare,85000,12000,38,North
+3,AgroFarm,Agriculture,60000,,30,East
+4,FinServe,Finance,150000,19500,70,North
+5,TechNova,IT,,15000,45,West
+6,MedLife,Healthcare,90000,11000,40,South
+7,GreenGro,Agriculture,50000,7000,25,East
+8,SafeBank,Finance,130000,20000,60,North
+9,InnoTech,IT,140000,18000,60,West
+10,CityCare,Healthcare,87000,9000,35,West
+11,AgriPro,Agriculture,55000,7000,,South
+12,MoneyMax,Finance,125000,18500,55,East
+13,NextGen,IT,135000,17000,50,North
+14,Wellness,Healthcare,80000,10500,30,South
+15,FarmFresh,Agriculture,53000,6000,20,West
+16,SecureFin,Finance,145000,21000,65,South
+17,CodeBase,IT,155000,19500,70,East
+18,LifeCare,Healthcare,95000,13000,36,North
+19,AgroTech,Agriculture,52000,6800,22,West
+20,FinEdge,Finance,138000,19000,60,South

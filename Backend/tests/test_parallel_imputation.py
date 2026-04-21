@@ -25,7 +25,28 @@ class ParallelImputationTests(unittest.TestCase):
         stages = [row.get("stage") for row in out.logs]
         self.assertIn("parallel_imputation", stages)
 
+    def test_predictive_fill_fills_rows_without_signal_and_blank_strings(self):
+        df = pd.DataFrame(
+            {
+                "sales": [100.0, 110.0, "", 130.0, None, 150.0],
+                "profit": [10.0, 11.0, None, 13.0, None, 15.0],
+                "name": ["TechSoft", "TechSoft", "TechSoft", "TechSoft", "TechSoft", "TechSoft"],
+            }
+        )
+
+        out = run_intelligent_pipeline(
+            df,
+            config={
+                "parallel_imputation": True,
+                "predictive_fill": True,
+                "max_missing_percent": 90.0,
+            },
+        )
+        self.assertFalse(out.df["sales"].isna().any())
+        self.assertFalse(out.df["profit"].isna().any())
+        stages = [row.get("stage") for row in out.logs]
+        self.assertIn("predictive_fill_fallback", stages)
+
 
 if __name__ == "__main__":
     unittest.main()
-

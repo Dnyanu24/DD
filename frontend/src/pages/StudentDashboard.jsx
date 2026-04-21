@@ -1,8 +1,49 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { BarChart3, Sparkles, Upload } from "lucide-react";
+import { BarChart3, Sparkles, Upload, BarChart3Icon } from "lucide-react";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import KPICard from "../components/KPICard";
+import { getRoleInsights } from "../services/api";
 
 export default function StudentDashboard() {
+  const [insights, setInsights] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    const loadInsights = async () => {
+      setLoading(true);
+      setError("");
+      try {
+        const data = await getRoleInsights();
+        if (alive) setInsights(data);
+      } catch (e) {
+        if (alive) setError(e?.message || "Failed to load insights");
+      } finally {
+        if (alive) setLoading(false);
+      }
+    };
+    loadInsights();
+    return () => { alive = false; };
+  }, []);
+
+  const kpis = Array.isArray(insights?.kpis) ? insights.kpis.slice(0, 4) : [
+    { title: "Datasets", value: loading ? "..." : "-", unit: "" },
+    { title: "Cleaned", value: loading ? "..." : "-", unit: "" },
+    { title: "Quality", value: loading ? "..." : "-", unit: "%" },
+    { title: "Patterns", value: loading ? "..." : "Ready", unit: "" }
+  ];
+
+  const recs = Array.isArray(insights?.recommendations) ? insights.recommendations.slice(0, 4) : [];
+
+  const defaultChartData = [
+    { metric: "Uploads", value: 3 },
+    { metric: "Cleaned", value: 3 },
+    { metric: "Predictions", value: 2 },
+    { metric: "Quality", value: 92 }
+  ];
+
   return (
     <div className="space-y-6">
       <div className="bg-theme-card rounded-2xl border border-theme-light p-6 shadow-theme">
@@ -12,14 +53,54 @@ export default function StudentDashboard() {
         </p>
       </div>
 
+      {error ? (
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          {error}
+        </div>
+      ) : null}
+
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-4">
-        <KPICard title="Datasets" value="-" change="Upload to begin" changeType="neutral" />
-        <KPICard title="Cleaned Files" value="-" change="Run cleaning" changeType="neutral" />
-        <KPICard title="Visual Patterns" value="-" change="Explore charts" changeType="neutral" />
-        <KPICard title="Notes" value="-" change="Save insights" changeType="neutral" />
+        {kpis.map((kpi, idx) => (
+          <KPICard
+            key={idx}
+            title={kpi.title}
+            value={kpi.unit ? `${kpi.value}${kpi.unit}` : kpi.value}
+            change=""
+            changeType="positive"
+          />
+        ))}
       </div>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div className="bg-theme-card rounded-2xl p-6 shadow-lg">
+          <h3 className="mb-4 text-lg font-semibold text-theme-primary">Learning Metrics</h3>
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart data={defaultChartData}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="metric" />
+              <YAxis />
+              <Tooltip />
+              <Bar dataKey="value" fill="#14B8A6" />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+
+        <div className="bg-theme-card rounded-2xl p-6 shadow-lg">
+          <h3 className="mb-4 text-lg font-semibold text-theme-primary">AI Recommendations</h3>
+          {recs.length ? (
+            <div className="space-y-3">
+              {recs.map((rec, idx) => (
+                <div key={idx} className="rounded-xl border border-theme-light bg-theme-secondary p-4">
+                  <p className="text-sm font-semibold">{rec.text || rec.recommendation_text}</p>
+                  <p className="mt-1 text-xs text-theme-muted">Conf: {rec.confidence || 'High'}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-theme-muted">{loading ? "Loading..." : "Upload data for recs."}</p>
+          )}
+        </div>
+
         <section className="rounded-2xl border border-theme-light bg-theme-card p-6 shadow-theme">
           <h2 className="text-lg font-semibold text-theme-primary">Quick Actions</h2>
           <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -27,7 +108,7 @@ export default function StudentDashboard() {
               <Upload className="h-5 w-5 text-teal-500" />
               Upload Dataset
             </Link>
-            <Link to="/cleaning" className="flex items-center gap-3 rounded-xl border border-theme-light bg-theme-secondary px-4 py-3 text-sm font-semibold text-theme-primary hover:bg-theme-tertiary">
+            <Link to="/data-cleaning" className="flex items-center gap-3 rounded-xl border border-theme-light bg-theme-secondary px-4 py-3 text-sm font-semibold text-theme-primary hover:bg-theme-tertiary">
               <Sparkles className="h-5 w-5 text-teal-500" />
               Clean Data
             </Link>
@@ -39,11 +120,11 @@ export default function StudentDashboard() {
         </section>
 
         <section className="rounded-2xl border border-theme-light bg-theme-card p-6 shadow-theme">
-          <h2 className="text-lg font-semibold text-theme-primary">Tips</h2>
+          <h2 className="text-lg font-semibold text-theme-primary">Learning Tips</h2>
           <ul className="mt-4 space-y-2 text-sm text-theme-muted">
-            <li>Upload small CSV/Excel files first to learn the pipeline.</li>
-            <li>Use the cleaned dataset Visualize button to auto-generate patterns.</li>
-            <li>Save important cleaned snapshots to the database for later.</li>
+            <li>Upload small CSV files to learn pipeline.</li>
+            <li>Visualize cleaned data for patterns.</li>
+            <li>Save snapshots to database.</li>
           </ul>
         </section>
       </div>

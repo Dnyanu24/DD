@@ -8,9 +8,9 @@ import math
 from datetime import datetime
 
 from app.database import SessionLocal
-from app.models import RawData, CleanedData, DataQualityScore, Sector, Product, User
+from app.models import RawData, CleanedData, DataQualityScore, Sector, Product, User, ExtractedDataset
 from app.dependencies import get_current_user
-from app.services.file_ingest import load_dataframe_from_uploadfile
+from app.services.file_ingest import load_dataframe_from_upload_bytes, detect_file_type, infer_parsed_output_pipeline
 
 router = APIRouter()
 
@@ -33,6 +33,8 @@ def _to_json_safe_records(df: pd.DataFrame):
         normalized_row = {}
         for key, value in row.items():
             if pd.isna(value):
+                normalized_row[key] = None
+            elif isinstance(value, str) and value.strip() == "":
                 normalized_row[key] = None
             elif isinstance(value, pd.Timestamp):
                 normalized_row[key] = value.isoformat()
@@ -144,13 +146,28 @@ async def upload_data(
     if current_user.role == 'sector_head' and current_user.sector_id != sector_id:
         raise HTTPException(status_code=403, detail="Access denied: Can only upload to assigned sector")
 
-    # Read file based on extension (csv/xlsx/json/txt/pdf where supported).
+    # Read file based on extension and content detection.
+    filename = getattr(file, "filename", "") or ""
+    upload_content_type = getattr(file, "content_type", "") or ""
+    raw_bytes = file.file.read()
+
+    file_detection = detect_file_type(filename, raw_bytes, upload_content_type)
     try:
-        df = load_dataframe_from_uploadfile(file)
+        df = load_dataframe_from_upload_bytes(filename, raw_bytes)
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception:
         raise HTTPException(status_code=400, detail="Unsupported file format")
+
+    output_pipeline = infer_parsed_output_pipeline(df)
+    pdf_report = None
+    pdf_datasets = None
+    try:
+        pdf_report = df.attrs.get("pdf_report") if hasattr(df, "attrs") else None
+        pdf_datasets = df.attrs.get("pdf_datasets") if hasattr(df, "attrs") else None
+    except Exception:
+        pdf_report = None
+        pdf_datasets = None
 
     # Metadata tagging
     # Store raw data
@@ -165,6 +182,41 @@ async def upload_data(
     db.commit()
     db.refresh(raw_data_entry)
 
+    extracted_dataset_ids = []
+    if file_detection.get("detected_format") == "pdf" and isinstance(pdf_datasets, dict) and pdf_datasets:
+        MAX_DATASET_ROWS = 5000
+        for dataset_name, dataset_df in pdf_datasets.items():
+            try:
+                if dataset_df is None or dataset_df.empty:
+                    continue
+
+                safe_dataset_records = _to_json_safe_records(dataset_df.head(MAX_DATASET_ROWS))
+                avg_conf = None
+                if "_record_confidence" in dataset_df.columns:
+                    try:
+                        avg_conf = float(dataset_df["_record_confidence"].mean())
+                    except Exception:
+                        avg_conf = None
+
+                ds = ExtractedDataset(
+                    raw_data_id=raw_data_entry.id,
+                    name=str(dataset_name),
+                    dataset_type=str(dataset_name),
+                    data=safe_dataset_records,
+                    schema={
+                        "columns": [str(c) for c in dataset_df.columns],
+                        "row_count": int(len(dataset_df)),
+                        "stored_row_count": int(min(len(dataset_df), MAX_DATASET_ROWS)),
+                    },
+                    avg_record_confidence=avg_conf,
+                )
+                db.add(ds)
+                db.flush()
+                extracted_dataset_ids.append({"name": str(dataset_name), "id": int(ds.id)})
+            except Exception:
+                continue
+        db.commit()
+
     # Upload keeps dataset in pending state; cleaning happens from Data Cleaning page.
     optimal_config = _adaptive_upload_config(db, df, company_id=current_user.company_id, sector_id=sector_id)
 
@@ -175,9 +227,88 @@ async def upload_data(
         "preview": safe_records[:5],
         "quality_scores": {},
         "logs": [],
-        "adaptive_config": optimal_config
+        "adaptive_config": optimal_config,
+        "file_detection": file_detection,
+        "file_detection_pipeline": file_detection["recommended_pipeline"],
+        "output_pipeline": output_pipeline,
     }
+    if file_detection.get("detected_format") == "pdf" and isinstance(pdf_report, dict):
+        payload["pdf_report"] = pdf_report
+        payload["extracted_dataset_tables"] = extracted_dataset_ids
     return _sanitize_json_payload(payload)
+
+
+@router.get("/datasets/{raw_data_id}")
+async def list_extracted_datasets(
+    raw_data_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    raw_data = (
+        db.query(RawData)
+        .join(Sector, Sector.id == RawData.sector_id)
+        .filter(RawData.id == raw_data_id, Sector.company_id == current_user.company_id)
+        .first()
+    )
+    if not raw_data:
+        raise HTTPException(status_code=404, detail="Data not found")
+
+    datasets = (
+        db.query(ExtractedDataset)
+        .filter(ExtractedDataset.raw_data_id == raw_data_id)
+        .order_by(ExtractedDataset.id.asc())
+        .all()
+    )
+    return [
+        {
+            "id": d.id,
+            "name": d.name,
+            "dataset_type": d.dataset_type,
+            "avg_record_confidence": d.avg_record_confidence,
+            "schema": d.schema,
+            "created_at": d.created_at,
+        }
+        for d in datasets
+    ]
+
+
+@router.get("/datasets/{raw_data_id}/{dataset_name}")
+async def get_extracted_dataset(
+    raw_data_id: int,
+    dataset_name: str,
+    limit: int = 2000,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    raw_data = (
+        db.query(RawData)
+        .join(Sector, Sector.id == RawData.sector_id)
+        .filter(RawData.id == raw_data_id, Sector.company_id == current_user.company_id)
+        .first()
+    )
+    if not raw_data:
+        raise HTTPException(status_code=404, detail="Data not found")
+
+    ds = (
+        db.query(ExtractedDataset)
+        .filter(ExtractedDataset.raw_data_id == raw_data_id, ExtractedDataset.name == dataset_name)
+        .order_by(ExtractedDataset.id.desc())
+        .first()
+    )
+    if not ds:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    rows = ds.data or []
+    if isinstance(limit, int) and limit > 0:
+        rows = rows[:limit]
+    return {
+        "id": ds.id,
+        "name": ds.name,
+        "dataset_type": ds.dataset_type,
+        "avg_record_confidence": ds.avg_record_confidence,
+        "schema": ds.schema,
+        "rows": rows,
+    }
 
 @router.get("/sectors")
 async def get_sectors(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):

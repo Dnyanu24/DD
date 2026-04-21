@@ -54,12 +54,10 @@ def populate_db():
             db.add(user)
         db.commit()
 
-        print("Database populated successfully!")
-        print("Demo credentials:")
-        print("  Username: admin, Password: admin123")
-        print("  Username: ceo, Password: admin123")
-        print("  Username: data_analyst, Password: admin123")
-        print("  Username: sector_head_sales, Password: admin123")
+print("Database populated successfully with sample data!")
+        print("Demo credentials (pw: admin123): admin, ceo, data_analyst, sector_head_sales")
+        print("Sample data added: Run 'python Backend/populate_db.py' again if needed.")
+        print("\\nTest dashboards: Login → Graphs/recs should now show data.")
 
 
     except Exception as e:

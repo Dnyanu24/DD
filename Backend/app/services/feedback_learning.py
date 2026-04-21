@@ -259,10 +259,24 @@ class FeedbackLearningEngine:
             ]], dtype=float)
             pred_online = None
             pred_backprop = None
+            # Ensure there are no NaNs in the feature vector before calling predict.
+            # Replace NaNs with 0.0 (safe fallback) and catch prediction errors.
+            if np.isnan(feature).any():
+                logger.warning("FeedbackLearningEngine: feature contains NaN, replacing NaN with 0.0 before predict")
+                feature = np.nan_to_num(feature, nan=0.0)
+
             if self.online_initialized:
-                pred_online = float(self.online_quality_model.predict(feature)[0])
+                try:
+                    pred_online = float(self.online_quality_model.predict(feature)[0])
+                except Exception as e:
+                    logger.error(f"Online quality model predict failed: {e}")
+                    pred_online = None
             if self.backprop_initialized:
-                pred_backprop = float(self.backprop_quality_model.predict(feature)[0])
+                try:
+                    pred_backprop = float(self.backprop_quality_model.predict(feature)[0])
+                except Exception as e:
+                    logger.error(f"Backprop quality model predict failed: {e}")
+                    pred_backprop = None
 
             if pred_online is not None and pred_backprop is not None:
                 pred_quality = (pred_online + pred_backprop) / 2.0

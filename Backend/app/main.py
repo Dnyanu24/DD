@@ -10,12 +10,14 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 from app.database import engine
+from app.database import run_sqlite_migrations
 from app.models import Base
 from app.routers import dashboard, auth
 from app.routers import upload, analysis, ai, reports
 from app.routers import role_router
 
 Base.metadata.create_all(bind=engine)
+run_sqlite_migrations()
 app = FastAPI(title="SDAS - Smart Data Analytics System")
 
 # Get allowed origins from environment or use default

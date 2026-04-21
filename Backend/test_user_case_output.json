@@ -1,0 +1,278 @@
+{
+  "input_preview": [
+    {
+      "id": 1,
+      "name": "abc corp",
+      "sector": "it",
+      "sales": 120000.0,
+      "profit": NaN,
+      "employee": 50.0,
+      "region": "west"
+    },
+    {
+      "id": 2,
+      "name": "healthplus",
+      "sector": "healthcare",
+      "sales": 85000.0,
+      "profit": 12000.0,
+      "employee": NaN,
+      "region": "north"
+    },
+    {
+      "id": 3,
+      "name": "agrofarm",
+      "sector": "agriculture",
+      "sales": 60000.0,
+      "profit": 8000.0,
+      "employee": 30.0,
+      "region": "east"
+    },
+    {
+      "id": 4,
+      "name": "finserve",
+      "sector": "finance",
+      "sales": 150000.0,
+      "profit": NaN,
+      "employee": 70.0,
+      "region": null
+    },
+    {
+      "id": 5,
+      "name": "technova",
+      "sector": "it",
+      "sales": NaN,
+      "profit": 15000.0,
+      "employee": 45.0,
+      "region": "west"
+    },
+    {
+      "id": 6,
+      "name": "medlife",
+      "sector": "healthcare",
+      "sales": 90000.0,
+      "profit": 11000.0,
+      "employee": 40.0,
+      "region": "south"
+    },
+    {
+      "id": 7,
+      "name": "greengrow",
+      "sector": "agriculture",
+      "sales": 52450.0,
+      "profit": NaN,
+      "employee": 25.0,
+      "region": "east"
+    },
+    {
+      "id": 8,
+      "name": "safebank",
+      "sector": "finance",
+      "sales": 130000.0,
+      "profit": 20000.0,
+      "employee": NaN,
+      "region": "north"
+    },
+    {
+      "id": 9,
+      "name": "innotech",
+      "sector": "it",
+      "sales": 140000.0,
+      "profit": 18000.0,
+      "employee": 60.0,
+      "region": null
+    },
+    {
+      "id": 10,
+      "name": "citycare",
+      "sector": "healthcare",
+      "sales": 90000.0,
+      "profit": NaN,
+      "employee": 35.0,
+      "region": "west"
+    }
+  ],
+  "normal_preview": [
+    {
+      "id": 1,
+      "name": "abc corp",
+      "sector": "it",
+      "sales": 120000.0,
+      "profit": 14000.0,
+      "employee": 50.0,
+      "region": "west"
+    },
+    {
+      "id": 2,
+      "name": "healthplus",
+      "sector": "healthcare",
+      "sales": 85000.0,
+      "profit": 12000.0,
+      "employee": 44.375,
+      "region": "north"
+    },
+    {
+      "id": 3,
+      "name": "agrofarm",
+      "sector": "agriculture",
+      "sales": 60000.0,
+      "profit": 9350.0,
+      "employee": 30.0,
+      "region": "east"
+    },
+    {
+      "id": 4,
+      "name": "finserve",
+      "sector": "finance",
+      "sales": 145500.0,
+      "profit": 14000.0,
+      "employee": 65.49999999999999,
+      "region": null
+    },
+    {
+      "id": 5,
+      "name": "technova",
+      "sector": "it",
+      "sales": 101938.88888888888,
+      "profit": 15000.0,
+      "employee": 45.0,
+      "region": "west"
+    },
+    {
+      "id": 6,
+      "name": "medlife",
+      "sector": "healthcare",
+      "sales": 90000.0,
+      "profit": 11000.0,
+      "employee": 40.0,
+      "region": "south"
+    },
+    {
+      "id": 7,
+      "name": "greengrow",
+      "sector": "agriculture",
+      "sales": 55847.5,
+      "profit": 14000.0,
+      "employee": 27.25,
+      "region": "east"
+    },
+    {
+      "id": 8,
+      "name": "safebank",
+      "sector": "finance",
+      "sales": 130000.0,
+      "profit": 19100.0,
+      "employee": 44.375,
+      "region": "north"
+    },
+    {
+      "id": 9,
+      "name": "innotech",
+      "sector": "it",
+      "sales": 140000.0,
+      "profit": 18000.0,
+      "employee": 60.0,
+      "region": null
+    },
+    {
+      "id": 10,
+      "name": "citycare",
+      "sector": "healthcare",
+      "sales": 90000.0,
+      "profit": 14000.0,
+      "employee": 35.0,
+      "region": "west"
+    }
+  ],
+  "predictive_preview": [
+    {
+      "id": 1,
+      "name": "abc corp",
+      "sector": "it",
+      "sales": 120000.0,
+      "profit": 16500.0,
+      "employee": 50.0,
+      "region": "west"
+    },
+    {
+      "id": 2,
+      "name": "healthplus",
+      "sector": "healthcare",
+      "sales": 85000.0,
+      "profit": 12000.0,
+      "employee": 37.5,
+      "region": "north"
+    },
+    {
+      "id": 3,
+      "name": "agrofarm",
+      "sector": "agriculture",
+      "sales": 60000.0,
+      "profit": 8000.0,
+      "employee": 30.0,
+      "region": "east"
+    },
+    {
+      "id": 4,
+      "name": "finserve",
+      "sector": "finance",
+      "sales": 145500.0,
+      "profit": 20000.0,
+      "employee": 70.0,
+      "region": "nan"
+    },
+    {
+      "id": 5,
+      "name": "technova",
+      "sector": "it",
+      "sales": 130000.0,
+      "profit": 15000.0,
+      "employee": 45.0,
+      "region": "west"
+    },
+    {
+      "id": 6,
+      "name": "medlife",
+      "sector": "healthcare",
+      "sales": 90000.0,
+      "profit": 11000.0,
+      "employee": 40.0,
+      "region": "south"
+    },
+    {
+      "id": 7,
+      "name": "greengrow",
+      "sector": "agriculture",
+      "sales": 55847.5,
+      "profit": 8000.0,
+      "employee": 27.25,
+      "region": "east"
+    },
+    {
+      "id": 8,
+      "name": "safebank",
+      "sector": "finance",
+      "sales": 130000.0,
+      "profit": 20000.0,
+      "employee": 70.0,
+      "region": "north"
+    },
+    {
+      "id": 9,
+      "name": "innotech",
+      "sector": "it",
+      "sales": 140000.0,
+      "profit": 18000.0,
+      "employee": 60.0,
+      "region": "nan"
+    },
+    {
+      "id": 10,
+      "name": "citycare",
+      "sector": "healthcare",
+      "sales": 90000.0,
+      "profit": 11500.0,
+      "employee": 35.0,
+      "region": "west"
+    }
+  ]
+}

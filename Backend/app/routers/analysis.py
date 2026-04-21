@@ -13,7 +13,7 @@ from datetime import datetime
 import re
 
 from app.database import SessionLocal
-from app.models import RawData, CleanedData, AIPrediction, AIRecommendation, DataQualityScore, Sector, Product, FeedbackLog, SavedCleanedDataset, PipelineIterationLog
+from app.models import RawData, CleanedData, AIPrediction, AIRecommendation, DataQualityScore, Sector, Product, FeedbackLog, SavedCleanedDataset, PipelineIterationLog, ExtractedDataset
 from app.services.data_cleaning import DataCleaningEngine
 from app.services.ai_predictions import AIPredictionEngine
 from app.services.feedback_learning import FeedbackLearningEngine
@@ -48,6 +48,31 @@ def _utc_iso() -> str:
 def _sse_event(event: str, data: Dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
 
+def _sanitize_json_value(value: Any) -> Any:
+    """Recursively convert NaN, Inf, and other non-JSON-safe values."""
+    if value is None:
+        return None
+    if isinstance(value, float):
+        if pd.isna(value) or not np.isfinite(value):
+            return None
+        return value
+    if isinstance(value, np.floating):
+        if pd.isna(value) or not np.isfinite(value):
+            return None
+        return float(value)
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, dict):
+        return {k: _sanitize_json_value(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_sanitize_json_value(v) for v in value]
+    if isinstance(value, pd.Timestamp):
+        return value.isoformat()
+    if isinstance(value, np.generic):
+        return _sanitize_json_value(value.item())
+    return value
+
+
 def _to_json_safe_records(df: pd.DataFrame) -> List[Dict[str, Any]]:
     safe_df = df.copy()
     for col in safe_df.columns:
@@ -64,6 +89,8 @@ def _to_json_safe_records(df: pd.DataFrame) -> List[Dict[str, Any]]:
                 normalized_row[key] = value.isoformat()
             elif isinstance(value, np.generic):
                 normalized_row[key] = value.item()
+            elif isinstance(value, str) and value.strip() == "":
+                normalized_row[key] = None
             else:
                 normalized_row[key] = value
         normalized.append(normalized_row)
@@ -287,6 +314,486 @@ def _load_dataframe_from_upload(file: UploadFile) -> pd.DataFrame:
     except Exception:
         raise HTTPException(status_code=400, detail="Unsupported file format")
 
+
+def _infer_pipeline_by_df(df: pd.DataFrame) -> str:
+    if df is None or df.empty:
+        return "structured"
+
+    text_columns = [c for c in df.select_dtypes(include=["object"]).columns]
+    if len(df.columns) == 1 and text_columns:
+        col = text_columns[0]
+        sample = df[col].dropna().astype(str).head(20)
+        if not sample.empty:
+            long_text_ratio = float(sum(len(text.split()) > 8 for text in sample)) / len(sample)
+            if long_text_ratio >= 0.6:
+                return "unstructured"
+
+    if any(str(c).lower() in {"document_text", "text", "content", "body"} for c in df.columns):
+        return "unstructured"
+
+    if len(text_columns) >= len(df.columns) - 1 and len(df.columns) <= 3:
+        text_only_ratio = float(len(text_columns)) / max(len(df.columns), 1)
+        if text_only_ratio >= 0.75:
+            return "unstructured"
+
+    return "structured"
+
+
+def _is_pdf_extracted_data(data: Any) -> bool:
+    """Check if data contains PDF extraction metadata"""
+    if not isinstance(data, list) or not data:
+        return False
+    
+    first_row = data[0] if isinstance(data, list) else None
+    if not isinstance(first_row, dict):
+        return False
+    
+    pdf_indicators = {"_page", "_block_index", "entity_type", "block_ind"}
+    return any(key in first_row for key in pdf_indicators)
+
+
+def _normalize_pdf_data(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize PDF-extracted data to standard format: page, block_ind, entity_type, value, confidence, record_confidence"""
+    normalized = df.copy()
+    
+    # Map column names to standard names
+    column_mapping = {
+        "_page": "page",
+        "_block_index": "block_ind",
+        "block_ind": "block_ind",
+        "block_index": "block_ind",
+    }
+    
+    for old_col, new_col in column_mapping.items():
+        if old_col in normalized.columns:
+            normalized.rename(columns={old_col: new_col}, inplace=True)
+    
+    # Ensure required columns exist
+    if "page" not in normalized.columns:
+        normalized["page"] = 1
+    if "block_ind" not in normalized.columns:
+        normalized["block_ind"] = range(len(normalized))
+    
+    # Handle entity_type
+    if "entity_type" not in normalized.columns:
+        # Try to infer from data
+        normalized["entity_type"] = "text"
+    
+    # Ensure confidence columns exist
+    if "confidence" not in normalized.columns and "_field_confidence" in normalized.columns:
+        normalized["confidence"] = normalized["_field_confidence"].apply(
+            lambda x: float(sum(x.values()) / len(x)) if isinstance(x, dict) else 0.5
+        )
+    elif "confidence" not in normalized.columns:
+        normalized["confidence"] = 0.5
+    
+    if "record_confidence" not in normalized.columns and "_record_confidence" in normalized.columns:
+        normalized["record_confidence"] = normalized["_record_confidence"]
+    elif "record_confidence" not in normalized.columns:
+        normalized["record_confidence"] = 0.5
+    
+    # Keep the core columns and relevant metadata
+    core_columns = ["page", "block_ind", "entity_type", "confidence", "record_confidence"]
+    
+    # Find non-metadata columns (these are actual extracted fields / table columns)
+    value_columns = [c for c in normalized.columns if c not in core_columns and not c.startswith("_")]
+
+    # If there is exactly one value column, try to detect whether that
+    # single column actually encodes a multi-column table (common when parsing PDFs).
+    # If so, split into multiple columns; otherwise rename to `value`.
+    if value_columns:
+        if len(value_columns) == 1:
+            single_col = value_columns[0]
+
+            def _try_split_single_col_to_table(series: pd.Series):
+                # Try splitting lines by two-or-more spaces (aligned columns), fallback to single spaces
+                lines = series.fillna("").astype(str).tolist()
+                # Tokenize using 2+ spaces first
+                tokenized = [re.split(r"\s{2,}", line.strip()) for line in lines]
+                counts = [len(t) for t in tokenized if any(tok.strip() for tok in t)]
+                if not counts:
+                    return None
+                # If majority rows have >=2 tokens and the modal token count is stable, accept split
+                from collections import Counter
+                cnt = Counter(counts)
+                modal_count, modal_freq = cnt.most_common(1)[0]
+                if modal_count >= 2 and modal_freq / max(1, len(counts)) >= 0.55:
+                    # Build columns
+                    cols = [f"col_{i+1}" for i in range(modal_count)]
+                    rows = []
+                    for parts in tokenized:
+                        # pad/truncate
+                        parts = [p.strip() for p in parts if p is not None]
+                        if len(parts) >= modal_count:
+                            rows.append(parts[:modal_count])
+                        else:
+                            rows.append(parts + [""] * (modal_count - len(parts)))
+                    return pd.DataFrame(rows, columns=cols)
+
+                # Fallback: try splitting by single spaces when lines have consistent numeric/text pattern
+                tokenized2 = [re.split(r"\s+", line.strip()) for line in lines]
+                counts2 = [len(t) for t in tokenized2 if any(tok.strip() for tok in t)]
+                if not counts2:
+                    return None
+                cnt2 = Counter(counts2)
+                modal_count2, modal_freq2 = cnt2.most_common(1)[0]
+                if modal_count2 >= 2 and modal_freq2 / max(1, len(counts2)) >= 0.65:
+                    cols = [f"col_{i+1}" for i in range(modal_count2)]
+                    rows = []
+                    for parts in tokenized2:
+                        parts = [p.strip() for p in parts if p is not None]
+                        if len(parts) >= modal_count2:
+                            rows.append(parts[:modal_count2])
+                        else:
+                            rows.append(parts + [""] * (modal_count2 - len(parts)))
+                    return pd.DataFrame(rows, columns=cols)
+
+                return None
+
+            try:
+                split_df = _try_split_single_col_to_table(normalized[single_col])
+            except Exception:
+                split_df = None
+
+            if split_df is not None and not split_df.empty:
+                # Drop original single column and concatenate split columns
+                normalized = normalized.drop(columns=[single_col])
+                # Insert split columns at front
+                for c in split_df.columns:
+                    normalized[c] = split_df[c].astype(str)
+                value_columns = [c for c in split_df.columns]
+            else:
+                # Not a multi-column table; rename to `value`
+                normalized.rename(columns={single_col: "value"}, inplace=True)
+                value_columns = ["value"]
+        else:
+            # preserve table columns as-is
+            pass
+    elif "value" not in normalized.columns:
+        # If no explicit value-like column, try to synthesize one from `key` if present
+        if "key" in normalized.columns:
+            normalized["value"] = normalized["key"].astype(str) + ": " + (normalized.get("value", "")).astype(str)
+            value_columns = ["value"]
+        else:
+            normalized["value"] = ""
+            value_columns = ["value"]
+
+    # Select and order final columns. For table-like outputs we keep all value_columns.
+    final_columns = ["page", "block_ind", "entity_type"] + value_columns + ["confidence", "record_confidence"]
+    # Ensure final columns exist in frame
+    final_columns = [c for c in final_columns if c in normalized.columns]
+    result = normalized[final_columns]
+    
+    # Ensure proper data types
+    result["page"] = pd.to_numeric(result["page"], errors="coerce").fillna(1).astype(int)
+    result["block_ind"] = pd.to_numeric(result["block_ind"], errors="coerce").fillna(0).astype(int)
+    result["confidence"] = pd.to_numeric(result["confidence"], errors="coerce").fillna(0.5).clip(0, 1)
+    result["record_confidence"] = pd.to_numeric(result["record_confidence"], errors="coerce").fillna(0.5).clip(0, 1)
+    result["value"] = result["value"].astype(str)
+    
+    return result
+
+
+def _select_data_pipeline(raw_data: RawData) -> str:
+    if hasattr(raw_data, "file_category") and getattr(raw_data, "file_category", None):
+        return "unstructured" if raw_data.file_category == "unstructured" else "structured"
+
+    if isinstance(getattr(raw_data, "data", None), dict):
+        metadata = raw_data.data.get("file_detection")
+        if isinstance(metadata, dict):
+            recommended = metadata.get("recommended_pipeline")
+            if recommended in {"structured", "unstructured"}:
+                return recommended
+
+    return _infer_pipeline_by_df(pd.DataFrame(raw_data.data))
+
+
+def _execute_cleaning_pipeline(
+    db: Session,
+    current_user: User,
+    data_id: int,
+    pipeline_type: str,
+    algorithm: str,
+    predictive_fill: bool,
+) -> Dict[str, Any]:
+    raw_data = _get_accessible_raw_data(db, data_id, current_user)
+    if not raw_data:
+        raise HTTPException(status_code=404, detail="Data not found")
+
+    cleaning_engine = DataCleaningEngine()
+    source_df = pd.DataFrame(raw_data.data)
+    
+    # Check if this is PDF-extracted data that needs special handling
+    is_pdf_data = _is_pdf_extracted_data(raw_data.data)
+    
+    missing_percent = _calculate_missing_percent(source_df)
+    audit_warning = _build_predictive_fill_audit(predictive_fill, missing_percent)
+    if audit_warning:
+        cleaning_engine.log_action("predictive_fill_override", audit_warning)
+
+    learning = _derive_learning_strategy(db, source_df, predictive_fill)
+    strategy_config = learning["config"]
+
+    # Route PDF uploads through their extracted dataset records when possible.
+    if is_pdf_data:
+        try:
+            extracted_rows = db.query(ExtractedDataset).filter(ExtractedDataset.raw_data_id == raw_data.id).all()
+        except Exception:
+            extracted_rows = []
+
+        cleaned_frames = []
+        intelligent_logs = []
+        if extracted_rows:
+            for ds in extracted_rows:
+                try:
+                    ds_df = pd.DataFrame(ds.data or [])
+                except Exception:
+                    ds_df = pd.DataFrame()
+                if ds_df is None or ds_df.empty:
+                    continue
+
+                if predictive_fill:
+                    try:
+                        intel = run_intelligent_pipeline(
+                            ds_df,
+                            db=db,
+                            company_id=current_user.company_id,
+                            sector_id=raw_data.sector_id,
+                            role=current_user.role,
+                            config=strategy_config,
+                        )
+                        cleaned = intel.df
+                        intelligent_logs.extend(getattr(intel, "logs", []) or [])
+                    except Exception:
+                        cleaned = ds_df.copy()
+                else:
+                    cleaned = ds_df.copy()
+                    cleaned = cleaning_engine.remove_duplicates(cleaned)
+                    numeric_cols = cleaned.select_dtypes(include=[np.number]).columns.tolist()
+                    impute_strategy = "median" if (len(numeric_cols) > 0 and abs(cleaned[numeric_cols].skew(numeric_only=True).mean()) >= 1.0) else "mean"
+                    cleaned = cleaning_engine.impute_missing_values(cleaned, strategy=impute_strategy, knn_k=strategy_config.get("knn_k", 5))
+                    cleaned = cleaning_engine.detect_outliers(cleaned, method=strategy_config.get("outlier_method", "iqr"))
+                    cleaned = cleaning_engine.correct_data_types(cleaned)
+                    if strategy_config.get("clean_text", False):
+                        cleaned = cleaning_engine.clean_text(cleaned)
+
+                try:
+                    cleaned["_source_dataset"] = str(ds.name)
+                except Exception:
+                    pass
+                cleaned_frames.append(cleaned)
+
+            if cleaned_frames:
+                structured_df = pd.concat(cleaned_frames, ignore_index=True, sort=False)
+                try:
+                    df_safe = cleaning_engine._stringify_unhashable_cells(structured_df)
+                except Exception:
+                    df_safe = structured_df
+                structured_df = _normalize_pdf_data(df_safe)
+            else:
+                # fallback: treat primary source frame
+                df_clean = cleaning_engine.remove_duplicates(source_df.copy())
+                if predictive_fill:
+                    intel = run_intelligent_pipeline(
+                        df_clean,
+                        db=db,
+                        company_id=current_user.company_id,
+                        sector_id=raw_data.sector_id,
+                        role=current_user.role,
+                        config=strategy_config,
+                    )
+                    structured_df = intel.df
+                else:
+                    numeric_cols = df_clean.select_dtypes(include=[np.number]).columns.tolist()
+                    impute_strategy = "median" if (len(numeric_cols) > 0 and abs(df_clean[numeric_cols].skew(numeric_only=True).mean()) >= 1.0) else "mean"
+                    df_clean = cleaning_engine.impute_missing_values(df_clean, strategy=impute_strategy, knn_k=strategy_config.get("knn_k", 5))
+                    df_clean = cleaning_engine.detect_outliers(df_clean, method=strategy_config.get("outlier_method", "iqr"))
+                    df_clean = cleaning_engine.correct_data_types(df_clean)
+                    if strategy_config.get("clean_text", False):
+                        df_clean = cleaning_engine.clean_text(df_clean)
+                    try:
+                        df_safe = cleaning_engine._stringify_unhashable_cells(df_clean)
+                    except Exception:
+                        df_safe = df_clean
+                    structured_df = _normalize_pdf_data(df_safe)
+        else:
+            # No extracted datasets saved; operate on the primary frame
+            df_clean = cleaning_engine.remove_duplicates(source_df.copy())
+            if predictive_fill:
+                intel = run_intelligent_pipeline(
+                    df_clean,
+                    db=db,
+                    company_id=current_user.company_id,
+                    sector_id=raw_data.sector_id,
+                    role=current_user.role,
+                    config=strategy_config,
+                )
+                structured_df = intel.df
+            else:
+                numeric_cols = df_clean.select_dtypes(include=[np.number]).columns.tolist()
+                impute_strategy = "median" if (len(numeric_cols) > 0 and abs(df_clean[numeric_cols].skew(numeric_only=True).mean()) >= 1.0) else "mean"
+                df_clean = cleaning_engine.impute_missing_values(df_clean, strategy=impute_strategy, knn_k=strategy_config.get("knn_k", 5))
+                df_clean = cleaning_engine.detect_outliers(df_clean, method=strategy_config.get("outlier_method", "iqr"))
+                df_clean = cleaning_engine.correct_data_types(df_clean)
+                if strategy_config.get("clean_text", False):
+                    df_clean = cleaning_engine.clean_text(df_clean)
+                try:
+                    df_safe = cleaning_engine._stringify_unhashable_cells(df_clean)
+                except Exception:
+                    df_safe = df_clean
+                structured_df = _normalize_pdf_data(df_safe)
+    else:
+        # Non-PDF flow: structured/unstructured pipelines
+        if pipeline_type == "structured":
+            df_clean = source_df.copy()
+            steps = _get_algorithm_steps(cleaning_engine, algorithm, strategy_config)
+            if not steps:
+                raise HTTPException(status_code=400, detail=f"Unsupported algorithm: {algorithm}")
+            for step in steps:
+                df_clean = step["operation"](df_clean)
+            # Ensure any nested/unhashable cells are stringified before structuring
+            try:
+                df_safe = cleaning_engine._stringify_unhashable_cells(df_clean)
+            except Exception:
+                df_safe = df_clean
+            structured_df = _structure_dataframe(df_safe)
+            intelligent = run_intelligent_pipeline(
+                structured_df,
+                db=db,
+                company_id=current_user.company_id,
+                sector_id=raw_data.sector_id,
+                role=current_user.role,
+                config=strategy_config,
+            )
+            structured_df = intelligent.df
+        else:
+            df_clean = cleaning_engine.clean_text(source_df.copy())
+            structured_df = _structure_dataframe(df_clean)
+            intelligent = run_intelligent_pipeline(
+                structured_df,
+                db=db,
+                company_id=current_user.company_id,
+                sector_id=raw_data.sector_id,
+                role=current_user.role,
+                config=strategy_config,
+            )
+            structured_df = intelligent.df
+    # Compute cleaning improvement metrics and persist cleaned variants for non-stream responses
+    try:
+        improvement = _compute_cleaning_improvement(source_df, structured_df)
+    except Exception:
+        improvement = {
+            "cleaned_percent": 0.0,
+            "missing_before_percent": 0.0,
+            "missing_after_percent": 0.0,
+            "duplicates_before": 0,
+            "duplicates_after": 0,
+        }
+
+    try:
+        persist_result = _persist_cleaned_variants(
+            db=db,
+            data_id=data_id,
+            algorithm=algorithm,
+            structured_df=structured_df,
+            quality_scores=cleaning_engine.get_quality_scores(),
+        )
+    except Exception:
+        persist_result = {}
+
+    _persist_predictive_fill_audit(db, current_user, data_id, algorithm, audit_warning)
+
+    best_methods = {}
+    validation_stats = {}
+    validation_warnings = []
+    if intelligent is not None:
+        for item in intelligent.logs:
+            if isinstance(item, dict) and item.get("stage") == "parallel_imputation":
+                best_methods = dict(item.get("best_method_by_column") or {})
+                break
+        for item in intelligent.logs:
+            if isinstance(item, dict) and item.get("stage") == "validation":
+                validation_stats = dict(item.get("stats") or {})
+                validation_warnings = list(item.get("warnings") or [])
+                break
+
+    best_config = dict(strategy_config or {})
+    if best_methods:
+        best_config["best_method_by_column"] = best_methods
+
+    best_metrics = {
+        "cleaned_percent": improvement.get("cleaned_percent"),
+        "missing_after_percent": improvement.get("missing_after_percent"),
+        "validation_stats": validation_stats,
+        "warnings_count": len(validation_warnings),
+    }
+
+    # Ensure we have a sector classification report available for the response
+    sector_report = None
+    try:
+        classifier = SectorClassifier(db, company_id=current_user.company_id)
+        try:
+            _ = None
+            # classify returns (df, report) — we only need the report here
+            _, sector_report = classifier.classify(structured_df.copy())
+        except Exception:
+            sector_report = None
+    except Exception:
+        sector_report = None
+
+    try:
+        MetaLearner(db).record_experience(
+            company_id=current_user.company_id,
+            sector_id=raw_data.sector_id,
+            df=structured_df,
+            best_config=best_config,
+            best_model={},
+            best_metrics=best_metrics,
+            source_cleaned_data_id=persist_result.get("primary_cleaned_data_id"),
+        )
+    except Exception:
+        pass
+
+    # Ensure `intelligent` exists for downstream reporting (streaming uses intel/log aggregators)
+    if "intelligent" not in locals() or intelligent is None:
+        class _DummyInt:
+            def __init__(self, logs=None, summary=None, warnings=None):
+                self.logs = logs or []
+                self.summary = summary or []
+                self.warnings = warnings or []
+
+        combined_logs = []
+        combined_logs.extend(locals().get("intelligent_logs", []) or [])
+        combined_logs.extend(locals().get("extra_intel_logs", []) or [])
+        intelligent = _DummyInt(logs=combined_logs, summary=[], warnings=[])
+
+    response = {
+        "message": "Data cleaning completed",
+        "data_id": data_id,
+        "pipeline": pipeline_type,
+        "algorithm": algorithm,
+        "predictive_fill": predictive_fill,
+        "audit_warning": audit_warning,
+        "is_pdf_data": is_pdf_data,
+        "row_count": len(structured_df),
+        "column_count": len(structured_df.columns),
+        "adaptive_config": strategy_config,
+        "pipeline_summary": intelligent.summary if intelligent is not None else [],
+        "pipeline_warnings": intelligent.warnings if intelligent is not None else [],
+        "sector_classification": {
+            "sector_counts": sector_report.sector_counts if sector_report else {},
+            "uncertain_rows": sector_report.uncertain_rows if sector_report else 0,
+            "used_model": sector_report.used_model if sector_report else "N/A",
+        } if not is_pdf_data else None,
+        "learning_feedback": learning["history"],
+        "cleaning_summary": improvement,
+        "quality_scores": cleaning_engine.get_quality_scores(),
+        "logs": cleaning_engine.get_logs() + (intelligent.logs if intelligent is not None else []),
+        **persist_result,
+    }
+    return response
+
+
 def _derive_learning_strategy(db: Session, df: pd.DataFrame, predictive_fill: bool = False) -> Dict[str, Any]:
     learning_engine = FeedbackLearningEngine()
     numeric_cols = df.select_dtypes(include=[np.number]).columns
@@ -337,6 +844,10 @@ def _derive_learning_strategy(db: Session, df: pd.DataFrame, predictive_fill: bo
 
     if predictive_fill:
         config["impute_strategy"] = "ml"
+        config["predictive_fill"] = True
+    else:
+        # Explicitly pass through so downstream pipelines can apply stricter behavior when enabled.
+        config["predictive_fill"] = False
 
     # IMPORTANT: Cleaning output should preserve original units by default.
     # Scaling/smoothing is for modeling, not for "cleaned dataset" export/visualization.
@@ -524,6 +1035,7 @@ async def analyze_upload(
     sector_id: int = Form(1),
     product_id: Optional[int] = Form(None),
     analysis_type: str = Form("full"),
+    predictive_fill: bool = Form(False),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -539,14 +1051,37 @@ async def analyze_upload(
     # Data Cleaning Analysis
     if analysis_type in ['full', 'cleaning_only']:
         cleaning_engine = DataCleaningEngine()
-        cleaned_df = cleaning_engine.run_full_pipeline(df)
-        
+        # If preview requested with predictive_fill, run the intelligent pipeline for a predictive preview.
+        if predictive_fill:
+            try:
+                intel = run_intelligent_pipeline(
+                    df.copy(),
+                    db=db,
+                    company_id=current_user.company_id,
+                    sector_id=sector_id,
+                    role=current_user.role,
+                    config={"predictive_fill": True},
+                )
+                cleaned_df = intel.df
+                quality_scores = cleaning_engine.get_quality_scores()
+                logs = cleaning_engine.get_logs() + getattr(intel, 'logs', [])
+            except Exception:
+                # fallback to the existing full pipeline on error
+                cleaned_df = cleaning_engine.run_full_pipeline(df)
+                quality_scores = cleaning_engine.get_quality_scores()
+                logs = cleaning_engine.get_logs()
+        else:
+            cleaned_df = cleaning_engine.run_full_pipeline(df)
+            quality_scores = cleaning_engine.get_quality_scores()
+            logs = cleaning_engine.get_logs()
+
         results['cleaning'] = {
-            'quality_scores': cleaning_engine.get_quality_scores(),
-            'logs': cleaning_engine.get_logs(),
+            'quality_scores': quality_scores,
+            'logs': logs,
             'preview': cleaned_df.head().to_dict('records'),
             'row_count': len(cleaned_df),
-            'column_count': len(cleaned_df.columns)
+            'column_count': len(cleaned_df.columns),
+            'predictive_preview': bool(predictive_fill),
         }
     
     # AI Predictions
@@ -578,6 +1113,7 @@ async def analyze_upload(
 async def analyze_data(
     data_id: int,
     analysis_type: str = "full",
+    predictive_fill: bool = False,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -597,11 +1133,31 @@ async def analyze_data(
     # Data Cleaning Analysis
     if analysis_type in ['full', 'cleaning_only']:
         cleaning_engine = DataCleaningEngine()
-        cleaned_df = cleaning_engine.run_full_pipeline(df)
+        if predictive_fill:
+            try:
+                intel = run_intelligent_pipeline(
+                    df.copy(),
+                    db=db,
+                    company_id=current_user.company_id,
+                    sector_id=raw_data.sector_id,
+                    role=current_user.role,
+                    config={"predictive_fill": True},
+                )
+                cleaned_df = intel.df
+                quality_scores = cleaning_engine.get_quality_scores()
+                logs = cleaning_engine.get_logs() + getattr(intel, 'logs', [])
+            except Exception:
+                cleaned_df = cleaning_engine.run_full_pipeline(df)
+                quality_scores = cleaning_engine.get_quality_scores()
+                logs = cleaning_engine.get_logs()
+        else:
+            cleaned_df = cleaning_engine.run_full_pipeline(df)
+            quality_scores = cleaning_engine.get_quality_scores()
+            logs = cleaning_engine.get_logs()
 
         results['cleaning'] = {
-            'quality_scores': cleaning_engine.get_quality_scores(),
-            'logs': cleaning_engine.get_logs(),
+            'quality_scores': quality_scores,
+            'logs': logs,
             'preview': cleaned_df.head().to_dict('records')
         }
 
@@ -693,6 +1249,17 @@ async def analyze_data(
     }
 
 
+def _safe_duplicate_count(df: pd.DataFrame) -> int:
+    try:
+        return int(df.duplicated().sum())
+    except TypeError:
+        normalized = df.copy()
+        normalized = normalized.applymap(
+            lambda x: json.dumps(x, default=str) if isinstance(x, (dict, list, set, tuple)) else x
+        )
+        return int(normalized.duplicated().sum())
+
+
 @router.post("/error-profile")
 async def error_profile(
     file: UploadFile = File(...),
@@ -705,7 +1272,7 @@ async def error_profile(
     total_cells = int(total_rows * total_columns) if total_rows and total_columns else 0
 
     missing_cells = int(df.isna().sum().sum()) if total_cells else 0
-    duplicate_rows = int(df.duplicated().sum()) if total_rows else 0
+    duplicate_rows = _safe_duplicate_count(df) if total_rows else 0
 
     outlier_count = 0
     numeric_cols = df.select_dtypes(include=[np.number]).columns
@@ -765,165 +1332,56 @@ async def error_profile(
 async def clean_data(
     data_id: int,
     algorithm: str = "full_pipeline",
+    pipeline: Optional[str] = None,
     predictive_fill: bool = False,
+    full_phases: bool = False,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Run data cleaning and persist cleaned output."""
+    """Run cleaning: full 6-phases if full_phases=true, else legacy."""
     raw_data = _get_accessible_raw_data(db, data_id, current_user)
     if not raw_data:
         raise HTTPException(status_code=404, detail="Data not found")
 
-    cleaning_engine = DataCleaningEngine()
-    source_df = pd.DataFrame(raw_data.data)
-    missing_percent = _calculate_missing_percent(source_df)
-    audit_warning = _build_predictive_fill_audit(predictive_fill, missing_percent)
-    if audit_warning:
-        cleaning_engine.log_action("predictive_fill_override", audit_warning)
-    learning = _derive_learning_strategy(db, source_df, predictive_fill)
-    strategy_config = learning["config"]
-    steps = _get_algorithm_steps(cleaning_engine, algorithm, strategy_config)
-    if not steps:
-        raise HTTPException(status_code=400, detail=f"Unsupported algorithm: {algorithm}")
+    df_raw = pd.DataFrame(raw_data.data)
 
-    try:
-        df_clean = source_df.copy()
-        for step in steps:
-            df_clean = step["operation"](df_clean)
-        structured_df = _structure_dataframe(df_clean)
+    if full_phases:
+        from app.services.pipeline_controller import run_full_pipeline_phases
+        result = await run_full_pipeline_phases(df_raw, db, current_user.company_id, raw_data.sector_id)
+        return result
+    else:
+        # Legacy path
+        if pipeline is None:
+            pipeline = _select_data_pipeline(raw_data)
+        elif pipeline not in {"structured", "unstructured"}:
+            raise HTTPException(status_code=400, detail="Unsupported pipeline type")
+        return _execute_cleaning_pipeline(db, current_user, data_id, pipeline, algorithm, predictive_fill)
 
-        # Intelligent unstructured -> structured conversion + validation layer.
-        intelligent = run_intelligent_pipeline(
-            structured_df,
-            db=db,
-            company_id=current_user.company_id,
-            sector_id=raw_data.sector_id,
-            role=current_user.role,
-            config=strategy_config,
-        )
-        structured_df = intelligent.df
 
-        # Auto sector classification (adds `sector`, `sector_confidence`, `sector_source`).
-        classifier = SectorClassifier(db, company_id=current_user.company_id)
-        structured_df, sector_report = classifier.classify(structured_df)
-        improvement = _compute_cleaning_improvement(source_df, structured_df)
 
-        persist_result = _persist_cleaned_variants(
-            db=db,
-            data_id=data_id,
-            algorithm=algorithm,
-            structured_df=structured_df,
-            quality_scores=cleaning_engine.get_quality_scores(),
-        )
-        _persist_predictive_fill_audit(db, current_user, data_id, algorithm, audit_warning)
+@router.post("/clean/structured/{data_id}")
+async def clean_structured_data(
+    data_id: int,
+    algorithm: str = "full_pipeline",
+    predictive_fill: bool = False,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Run the structured data cleaning pipeline."""
+    return _execute_cleaning_pipeline(db, current_user, data_id, "structured", algorithm, predictive_fill)
 
-        # Self-learning: store what worked for this dataset so future clean runs can warm-start.
-        # This captures the selected imputation methods (parallel imputation) and basic quality metrics.
-        try:
-            best_methods = {}
-            for item in intelligent.logs:
-                if isinstance(item, dict) and item.get("stage") == "parallel_imputation":
-                    best_methods = dict(item.get("best_method_by_column") or {})
-                    break
 
-            best_config = dict(intelligent.config_used or {})
-            if best_methods:
-                best_config["best_method_by_column"] = best_methods
+@router.post("/clean/unstructured/{data_id}")
+async def clean_unstructured_data(
+    data_id: int,
+    algorithm: str = "full_pipeline",
+    predictive_fill: bool = False,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Run the unstructured data cleaning pipeline."""
+    return _execute_cleaning_pipeline(db, current_user, data_id, "unstructured", algorithm, predictive_fill)
 
-            validation_stats = {}
-            validation_warnings = []
-            for item in intelligent.logs:
-                if isinstance(item, dict) and item.get("stage") == "validation":
-                    validation_stats = dict(item.get("stats") or {})
-                    validation_warnings = list(item.get("warnings") or [])
-                    break
-
-            best_metrics = {
-                "cleaned_percent": improvement.get("cleaned_percent"),
-                "missing_after_percent": improvement.get("missing_after_percent"),
-                "validation_stats": validation_stats,
-                "warnings_count": len(intelligent.warnings or []) + len(validation_warnings),
-            }
-
-            MetaLearner(db).record_experience(
-                company_id=current_user.company_id,
-                sector_id=raw_data.sector_id,
-                df=source_df,
-                best_config=best_config,
-                best_model={"model_type": "data_cleaning", "params": {}},
-                best_metrics=best_metrics,
-                source_cleaned_data_id=int(persist_result.get("primary_cleaned_data_id") or 0) or None,
-            )
-        except Exception:
-            pass
-
-        # Iteration logs (SQLite) for visibility and future optimization.
-        try:
-            analyzer = RootCauseAnalyzer()
-            rc = analyzer.analyze(
-                source_df,
-                structured_df,
-                metrics={"cleaned_percent": improvement.get("cleaned_percent"), "missing_after_percent": improvement.get("missing_after_percent")},
-                previous_metrics=None,
-                cleaning_config=strategy_config,
-            )
-            run_key = f"data_cleaning:{current_user.company_id}:{raw_data.sector_id or 'all'}:{data_id}:{datetime.utcnow().strftime('%Y%m%dT%H%M%S')}"
-            entry = PipelineIterationLog(
-                company_id=int(current_user.company_id),
-                sector_id=int(raw_data.sector_id) if raw_data.sector_id is not None else None,
-                task="data_cleaning",
-                run_key=run_key,
-                iteration=0,
-                status="completed",
-                metrics={
-                    "cleaned_percent": improvement.get("cleaned_percent"),
-                    "missing_before_percent": improvement.get("missing_before_percent"),
-                    "missing_after_percent": improvement.get("missing_after_percent"),
-                    "duplicates_before": improvement.get("duplicates_before"),
-                    "duplicates_after": improvement.get("duplicates_after"),
-                    "quality_score": persist_result.get("quality_score"),
-                },
-                previous_metrics=None,
-                dataset_stats=rc.dataset_stats,
-                cleaning_config=dict(best_config if "best_config" in locals() else strategy_config),
-                root_cause={
-                    "root_causes": rc.root_causes,
-                    "recommended_config_updates": rc.recommended_config_updates,
-                },
-                notes="Auto-logged cleaning run (self-learning enabled via parallel imputation selection).",
-                created_at=datetime.utcnow(),
-            )
-            db.add(entry)
-            db.commit()
-        except Exception:
-            db.rollback()
-
-        return {
-            "message": "Data cleaning completed",
-            "data_id": data_id,
-            "algorithm": algorithm,
-            "predictive_fill": predictive_fill,
-            "audit_warning": audit_warning,
-            "row_count": len(structured_df),
-            "column_count": len(structured_df.columns),
-            "adaptive_config": strategy_config,
-            "schema": intelligent.schema,
-            "pipeline_summary": intelligent.summary,
-            "pipeline_warnings": intelligent.warnings,
-            "sector_classification": {
-                "sector_counts": sector_report.sector_counts,
-                "uncertain_rows": sector_report.uncertain_rows,
-                "used_model": sector_report.used_model,
-            },
-            "learning_feedback": learning["history"],
-            "cleaning_summary": improvement,
-            "quality_scores": cleaning_engine.get_quality_scores(),
-            "logs": cleaning_engine.get_logs() + intelligent.logs,
-            **persist_result,
-        }
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Data cleaning failed: {str(e)}")
 
 @router.get("/clean-stream/{data_id}")
 async def clean_data_stream(
@@ -941,15 +1399,28 @@ async def clean_data_stream(
 
     cleaning_engine = DataCleaningEngine()
     source_df = pd.DataFrame(raw_data.data)
+    
+    # Check if this is PDF-extracted data
+    is_pdf_data = _is_pdf_extracted_data(raw_data.data)
+    
     missing_percent = _calculate_missing_percent(source_df)
     audit_warning = _build_predictive_fill_audit(predictive_fill, missing_percent)
     if audit_warning:
         cleaning_engine.log_action("predictive_fill_override", audit_warning)
     learning = _derive_learning_strategy(db, source_df, predictive_fill)
     strategy_config = learning["config"]
-    steps = _get_algorithm_steps(cleaning_engine, algorithm, strategy_config)
-    if not steps:
-        raise HTTPException(status_code=400, detail=f"Unsupported algorithm: {algorithm}")
+    
+    # For PDF data, we use simpler steps
+    if is_pdf_data:
+        steps = [
+            {"id": "remove_duplicates", "label": "Removing duplicate rows", "stage": "cleaning", "technique": "deduplication"},
+            {"id": "impute_missing", "label": "Imputing missing values", "stage": "ml", "technique": "auto-imputation"},
+            {"id": "normalize_pdf", "label": "Normalizing PDF structure", "stage": "structuring", "technique": "schema normalization"},
+        ]
+    else:
+        steps = _get_algorithm_steps(cleaning_engine, algorithm, strategy_config)
+        if not steps:
+            raise HTTPException(status_code=400, detail=f"Unsupported algorithm: {algorithm}")
 
     async def event_generator():
         try:
@@ -960,6 +1431,7 @@ async def clean_data_stream(
                 "predictive_fill": predictive_fill,
                 "audit_warning": audit_warning,
                 "total_steps": len(steps),
+                "is_pdf_data": is_pdf_data,
                 "adaptive_config": strategy_config,
                 "learning_feedback": learning["history"],
                 "timestamp": _utc_iso(),
@@ -974,20 +1446,30 @@ async def clean_data_stream(
                     "label": step["label"],
                     "status": "running",
                     "stage": step["stage"],
-                    "technique": step["technique"],
+                    "technique": step.get("technique", "unknown"),
                     "progress": int((index / len(steps)) * 100),
                     "timestamp": _utc_iso(),
                 })
 
                 await asyncio.sleep(0.05)
-                df_clean = step["operation"](df_clean)
+                
+                # Apply PDF-specific cleaning steps
+                if is_pdf_data:
+                    if step["id"] == "remove_duplicates":
+                        df_clean = cleaning_engine.remove_duplicates(df_clean)
+                    elif step["id"] == "impute_missing":
+                        df_clean = cleaning_engine.impute_missing_values(df_clean, strategy=strategy_config.get("impute_strategy", "auto"))
+                    elif step["id"] == "normalize_pdf":
+                        pass  # Will be done after loop
+                else:
+                    df_clean = step["operation"](df_clean)
 
                 yield _sse_event("step", {
                     "step_id": step["id"],
                     "label": step["label"],
                     "status": "completed",
                     "stage": step["stage"],
-                    "technique": step["technique"],
+                    "technique": step.get("technique", "unknown"),
                     "progress": int(((index + 1) / len(steps)) * 100),
                     "timestamp": _utc_iso(),
                     "row_count": len(df_clean),
@@ -1004,7 +1486,139 @@ async def clean_data_stream(
                 "progress": 96,
                 "timestamp": _utc_iso(),
             })
-            structured_df = _structure_dataframe(df_clean)
+            
+            # Apply final structuring
+            extra_intel_logs = []
+            if is_pdf_data:
+                # For PDF-extracted data, prefer to process any persisted ExtractedDataset
+                # records (one per table/region) and run the intelligent pipeline per-record.
+                try:
+                    extracted_rows = db.query(ExtractedDataset).filter(ExtractedDataset.raw_data_id == raw_data.id).all()
+                except Exception:
+                    extracted_rows = []
+
+                cleaned_frames = []
+                if extracted_rows:
+                    for ds in extracted_rows:
+                        try:
+                            ds_df = pd.DataFrame(ds.data or [])
+                        except Exception:
+                            ds_df = pd.DataFrame()
+
+                        if ds_df is None or ds_df.empty:
+                            continue
+
+                        # Basic dedupe first
+                        try:
+                            ds_df = cleaning_engine.remove_duplicates(ds_df)
+                        except Exception:
+                            pass
+
+                        if predictive_fill:
+                            try:
+                                intel = run_intelligent_pipeline(
+                                    ds_df,
+                                    db=db,
+                                    company_id=current_user.company_id,
+                                    sector_id=raw_data.sector_id,
+                                    role=current_user.role,
+                                    config=strategy_config,
+                                )
+                                cleaned = intel.df
+                                extra_intel_logs.extend(getattr(intel, "logs", []) or [])
+                            except Exception:
+                                # fallback to heuristic imputation if intelligent pipeline fails
+                                try:
+                                    numeric_cols = ds_df.select_dtypes(include=[np.number]).columns.tolist()
+                                    impute_strategy = "median" if (len(numeric_cols) > 0 and abs(ds_df[numeric_cols].skew(numeric_only=True).mean()) >= 1.0) else "mean"
+                                except Exception:
+                                    impute_strategy = "mean"
+                                cleaned = cleaning_engine.impute_missing_values(ds_df.copy(), strategy=impute_strategy, knn_k=strategy_config.get("knn_k", 5))
+                                cleaned = cleaning_engine.detect_outliers(cleaned, method=strategy_config.get("outlier_method", "iqr"))
+                                cleaned = cleaning_engine.correct_data_types(cleaned)
+                        else:
+                            cleaned = cleaning_engine.impute_missing_values(ds_df.copy(), strategy=strategy_config.get("impute_strategy", "mean"), knn_k=strategy_config.get("knn_k", 5))
+                            cleaned = cleaning_engine.detect_outliers(cleaned, method=strategy_config.get("outlier_method", "iqr"))
+                            cleaned = cleaning_engine.correct_data_types(cleaned)
+
+                        cleaned_frames.append(cleaned)
+
+                    if cleaned_frames:
+                        structured_df = pd.concat(cleaned_frames, ignore_index=True, sort=False)
+                        try:
+                            df_safe = cleaning_engine._stringify_unhashable_cells(structured_df)
+                        except Exception:
+                            df_safe = structured_df
+                        structured_df = _normalize_pdf_data(df_safe)
+                    else:
+                        # No valid extracted frames; normalize primary extracted frame and run intelligence if requested
+                        try:
+                            df_safe = cleaning_engine._stringify_unhashable_cells(df_clean)
+                        except Exception:
+                            df_safe = df_clean
+                        structured_df = _normalize_pdf_data(df_safe)
+                        if predictive_fill:
+                            try:
+                                intel = run_intelligent_pipeline(
+                                    structured_df,
+                                    db=db,
+                                    company_id=current_user.company_id,
+                                    sector_id=raw_data.sector_id,
+                                    role=current_user.role,
+                                    config=strategy_config,
+                                )
+                                structured_df = intel.df
+                                extra_intel_logs = getattr(intel, "logs", []) or []
+                            except Exception:
+                                extra_intel_logs = []
+                else:
+                    # No extracted_rows persisted - operate on the primary extracted frame
+                    try:
+                        df_safe = cleaning_engine._stringify_unhashable_cells(df_clean)
+                    except Exception:
+                        df_safe = df_clean
+                    structured_df = _normalize_pdf_data(df_safe)
+                    if predictive_fill:
+                        try:
+                            intel = run_intelligent_pipeline(
+                                structured_df,
+                                db=db,
+                                company_id=current_user.company_id,
+                                sector_id=raw_data.sector_id,
+                                role=current_user.role,
+                                config=strategy_config,
+                            )
+                            structured_df = intel.df
+                            extra_intel_logs = getattr(intel, "logs", []) or []
+                        except Exception:
+                            extra_intel_logs = []
+            else:
+                # Convert to structured form first, then run the intelligent pipeline
+                # so that streaming/persisted results include predictive imputation.
+                try:
+                    try:
+                        df_safe = cleaning_engine._stringify_unhashable_cells(df_clean)
+                    except Exception:
+                        df_safe = df_clean
+                    pre_struct = _structure_dataframe(df_safe)
+                    intel = run_intelligent_pipeline(
+                        pre_struct,
+                        db=db,
+                        company_id=current_user.company_id,
+                        sector_id=raw_data.sector_id,
+                        role=current_user.role,
+                        config=strategy_config,
+                    )
+                    structured_df = intel.df
+                    extra_intel_logs = getattr(intel, "logs", []) or []
+                except Exception:
+                    # If intelligent pipeline fails for any reason, fall back to simple structuring
+                    try:
+                        df_safe = cleaning_engine._stringify_unhashable_cells(df_clean)
+                    except Exception:
+                        df_safe = df_clean
+                    structured_df = _structure_dataframe(df_safe)
+                    extra_intel_logs = []
 
             improvement = _compute_cleaning_improvement(source_df, structured_df)
 
@@ -1027,15 +1641,19 @@ async def clean_data_stream(
                 "row_count": len(structured_df),
             })
 
+            # Merge cleaning engine logs with any intelligent-pipeline logs for visibility
+            merged_logs = cleaning_engine.get_logs() + extra_intel_logs
+
             yield _sse_event("complete", {
                 "data_id": data_id,
                 "algorithm": algorithm,
                 "predictive_fill": predictive_fill,
                 "audit_warning": audit_warning,
+                "is_pdf_data": is_pdf_data,
                 "row_count": len(structured_df),
                 "column_count": len(structured_df.columns),
                 "quality_scores": cleaning_engine.get_quality_scores(),
-                "logs": cleaning_engine.get_logs(),
+                "logs": merged_logs,
                 "adaptive_config": strategy_config,
                 "learning_feedback": learning["history"],
                 "cleaning_summary": improvement,
@@ -1397,6 +2015,8 @@ async def get_cleaned_dataset_preview(
     cleaned, raw = row
     records = cleaned.cleaned_data if isinstance(cleaned.cleaned_data, list) else []
     preview = records[offset:offset + limit]
+    # Sanitize preview data to remove NaN/Inf values
+    preview = [_sanitize_json_value(row) for row in preview]
     columns = list(preview[0].keys()) if preview and isinstance(preview[0], dict) else []
     algo = cleaned.cleaning_algorithm or "unknown"
     sector_label = "all"
