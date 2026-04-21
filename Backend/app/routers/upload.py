@@ -5,6 +5,7 @@ import pandas as pd
 import numpy as np
 import json
 import math
+import io
 from datetime import datetime
 
 from app.database import SessionLocal
@@ -159,23 +160,25 @@ async def upload_data(
     except Exception:
         raise HTTPException(status_code=400, detail="Unsupported file format")
 
-    output_pipeline = infer_parsed_output_pipeline(df)
-    pdf_report = None
-    pdf_datasets = None
-    try:
-        pdf_report = df.attrs.get("pdf_report") if hasattr(df, "attrs") else None
-        pdf_datasets = df.attrs.get("pdf_datasets") if hasattr(df, "attrs") else None
-    except Exception:
-        pdf_report = None
-        pdf_datasets = None
-
-    # Metadata tagging
-    # Store raw data
-    safe_records = _to_json_safe_records(df)
+    # Convert ALL to CSV format for unified storage
+    csv_buffer = io.StringIO()
+    df.to_csv(csv_buffer, index=False)
+    csv_content = csv_buffer.getvalue()
+    
+    # Parse CSV back to records (standard format for ALL files)
+    df_csv = pd.read_csv(io.StringIO(csv_content))
+    safe_records = _to_json_safe_records(df_csv)
+    
+    # File detection metadata
+    output_pipeline = "structured"  # ALL become structured CSV
+    file_detection["detected_format"] = "csv"
+    file_detection["file_category"] = "structured"
+    file_detection["recommended_pipeline"] = "structured"
+    
     raw_data_entry = RawData(
         sector_id=sector_id,
         product_id=product_id,
-        data=safe_records,  # Store JSON-safe records (no NaN/Inf)
+        data=safe_records,  # Store standardized CSV records
         uploaded_by=current_user.id
     )
     db.add(raw_data_entry)

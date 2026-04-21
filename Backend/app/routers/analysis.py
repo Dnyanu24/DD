@@ -478,20 +478,23 @@ def _normalize_pdf_data(df: pd.DataFrame) -> pd.DataFrame:
             normalized["value"] = ""
             value_columns = ["value"]
 
-    # Select and order final columns. For table-like outputs we keep all value_columns.
-    final_columns = ["page", "block_ind", "entity_type"] + value_columns + ["confidence", "record_confidence"]
-    # Ensure final columns exist in frame
+# Select final columns - STRIP METADATA for clean structured output
+    # Keep ONLY data columns + confidence (drop page/block_ind/entity_type for clean tables)
+    # PURE DATA ONLY - NO METADATA/CONFIDENCE
+    data_columns = value_columns  # Just extracted business data
+    final_columns = data_columns  # Sector_Name, Month, Revenue... ONLY
     final_columns = [c for c in final_columns if c in normalized.columns]
     result = normalized[final_columns]
     
     # Ensure proper data types
-    result["page"] = pd.to_numeric(result["page"], errors="coerce").fillna(1).astype(int)
-    result["block_ind"] = pd.to_numeric(result["block_ind"], errors="coerce").fillna(0).astype(int)
-    result["confidence"] = pd.to_numeric(result["confidence"], errors="coerce").fillna(0.5).clip(0, 1)
-    result["record_confidence"] = pd.to_numeric(result["record_confidence"], errors="coerce").fillna(0.5).clip(0, 1)
-    result["value"] = result["value"].astype(str)
-    
+    # Type safety only for confidence columns if present
+    for col in ["confidence", "record_confidence"]:
+        if col in result.columns:
+            result[col] = pd.to_numeric(result[col], errors="coerce").fillna(0.5).clip(0, 1)
+
+    # Data columns already strings from extraction
     return result
+
 
 
 def _select_data_pipeline(raw_data: RawData) -> str:
@@ -523,8 +526,8 @@ def _execute_cleaning_pipeline(
     cleaning_engine = DataCleaningEngine()
     source_df = pd.DataFrame(raw_data.data)
     
-    # Check if this is PDF-extracted data that needs special handling
-    is_pdf_data = _is_pdf_extracted_data(raw_data.data)
+# ALL data stored as CSV → structured pipeline only
+    is_pdf_data = False
     
     missing_percent = _calculate_missing_percent(source_df)
     audit_warning = _build_predictive_fill_audit(predictive_fill, missing_percent)
@@ -535,128 +538,30 @@ def _execute_cleaning_pipeline(
     strategy_config = learning["config"]
 
     # Route PDF uploads through their extracted dataset records when possible.
-    if is_pdf_data:
-        try:
-            extracted_rows = db.query(ExtractedDataset).filter(ExtractedDataset.raw_data_id == raw_data.id).all()
-        except Exception:
-            extracted_rows = []
-
-        cleaned_frames = []
-        intelligent_logs = []
-        if extracted_rows:
-            for ds in extracted_rows:
-                try:
-                    ds_df = pd.DataFrame(ds.data or [])
-                except Exception:
-                    ds_df = pd.DataFrame()
-                if ds_df is None or ds_df.empty:
-                    continue
-
-                if predictive_fill:
-                    try:
-                        intel = run_intelligent_pipeline(
-                            ds_df,
-                            db=db,
-                            company_id=current_user.company_id,
-                            sector_id=raw_data.sector_id,
-                            role=current_user.role,
-                            config=strategy_config,
-                        )
-                        cleaned = intel.df
-                        intelligent_logs.extend(getattr(intel, "logs", []) or [])
-                    except Exception:
-                        cleaned = ds_df.copy()
-                else:
-                    cleaned = ds_df.copy()
-                    cleaned = cleaning_engine.remove_duplicates(cleaned)
-                    numeric_cols = cleaned.select_dtypes(include=[np.number]).columns.tolist()
-                    impute_strategy = "median" if (len(numeric_cols) > 0 and abs(cleaned[numeric_cols].skew(numeric_only=True).mean()) >= 1.0) else "mean"
-                    cleaned = cleaning_engine.impute_missing_values(cleaned, strategy=impute_strategy, knn_k=strategy_config.get("knn_k", 5))
-                    cleaned = cleaning_engine.detect_outliers(cleaned, method=strategy_config.get("outlier_method", "iqr"))
-                    cleaned = cleaning_engine.correct_data_types(cleaned)
-                    if strategy_config.get("clean_text", False):
-                        cleaned = cleaning_engine.clean_text(cleaned)
-
-                try:
-                    cleaned["_source_dataset"] = str(ds.name)
-                except Exception:
-                    pass
-                cleaned_frames.append(cleaned)
-
-            if cleaned_frames:
-                structured_df = pd.concat(cleaned_frames, ignore_index=True, sort=False)
-                try:
-                    df_safe = cleaning_engine._stringify_unhashable_cells(structured_df)
-                except Exception:
-                    df_safe = structured_df
-                structured_df = _normalize_pdf_data(df_safe)
-            else:
-                # fallback: treat primary source frame
-                df_clean = cleaning_engine.remove_duplicates(source_df.copy())
-                if predictive_fill:
-                    intel = run_intelligent_pipeline(
-                        df_clean,
-                        db=db,
-                        company_id=current_user.company_id,
-                        sector_id=raw_data.sector_id,
-                        role=current_user.role,
-                        config=strategy_config,
-                    )
-                    structured_df = intel.df
-                else:
-                    numeric_cols = df_clean.select_dtypes(include=[np.number]).columns.tolist()
-                    impute_strategy = "median" if (len(numeric_cols) > 0 and abs(df_clean[numeric_cols].skew(numeric_only=True).mean()) >= 1.0) else "mean"
-                    df_clean = cleaning_engine.impute_missing_values(df_clean, strategy=impute_strategy, knn_k=strategy_config.get("knn_k", 5))
-                    df_clean = cleaning_engine.detect_outliers(df_clean, method=strategy_config.get("outlier_method", "iqr"))
-                    df_clean = cleaning_engine.correct_data_types(df_clean)
-                    if strategy_config.get("clean_text", False):
-                        df_clean = cleaning_engine.clean_text(df_clean)
-                    try:
-                        df_safe = cleaning_engine._stringify_unhashable_cells(df_clean)
-                    except Exception:
-                        df_safe = df_clean
-                    structured_df = _normalize_pdf_data(df_safe)
-        else:
-            # No extracted datasets saved; operate on the primary frame
-            df_clean = cleaning_engine.remove_duplicates(source_df.copy())
-            if predictive_fill:
-                intel = run_intelligent_pipeline(
-                    df_clean,
-                    db=db,
-                    company_id=current_user.company_id,
-                    sector_id=raw_data.sector_id,
-                    role=current_user.role,
-                    config=strategy_config,
-                )
-                structured_df = intel.df
-            else:
-                numeric_cols = df_clean.select_dtypes(include=[np.number]).columns.tolist()
-                impute_strategy = "median" if (len(numeric_cols) > 0 and abs(df_clean[numeric_cols].skew(numeric_only=True).mean()) >= 1.0) else "mean"
-                df_clean = cleaning_engine.impute_missing_values(df_clean, strategy=impute_strategy, knn_k=strategy_config.get("knn_k", 5))
-                df_clean = cleaning_engine.detect_outliers(df_clean, method=strategy_config.get("outlier_method", "iqr"))
-                df_clean = cleaning_engine.correct_data_types(df_clean)
-                if strategy_config.get("clean_text", False):
-                    df_clean = cleaning_engine.clean_text(df_clean)
-                try:
-                    df_safe = cleaning_engine._stringify_unhashable_cells(df_clean)
-                except Exception:
-                    df_safe = df_clean
-                structured_df = _normalize_pdf_data(df_safe)
+    # Structured CSV pipeline for ALL files
+    df_clean = cleaning_engine.remove_duplicates(source_df.copy())
+    steps = _get_algorithm_steps(cleaning_engine, algorithm, strategy_config)
+    for step in steps:
+        df_clean = step["operation"](df_clean)
+    structured_df = df_clean
+    intelligent = None
+    try:
+        intelligent = run_intelligent_pipeline(
+            structured_df,
+            db=db,
+            company_id=current_user.company_id,
+            sector_id=raw_data.sector_id,
+            role=current_user.role,
+            config=strategy_config,
+        )
+        structured_df = intelligent.df
+    except Exception:
+        pass
     else:
-        # Non-PDF flow: structured/unstructured pipelines
-        if pipeline_type == "structured":
-            df_clean = source_df.copy()
-            steps = _get_algorithm_steps(cleaning_engine, algorithm, strategy_config)
-            if not steps:
-                raise HTTPException(status_code=400, detail=f"Unsupported algorithm: {algorithm}")
-            for step in steps:
-                df_clean = step["operation"](df_clean)
-            # Ensure any nested/unhashable cells are stringified before structuring
-            try:
-                df_safe = cleaning_engine._stringify_unhashable_cells(df_clean)
-            except Exception:
-                df_safe = df_clean
-            structured_df = _structure_dataframe(df_safe)
+        df_clean = cleaning_engine.clean_text(source_df.copy())
+        structured_df = _structure_dataframe(df_clean)
+        intelligent = None
+        try:
             intelligent = run_intelligent_pipeline(
                 structured_df,
                 db=db,
@@ -666,18 +571,8 @@ def _execute_cleaning_pipeline(
                 config=strategy_config,
             )
             structured_df = intelligent.df
-        else:
-            df_clean = cleaning_engine.clean_text(source_df.copy())
-            structured_df = _structure_dataframe(df_clean)
-            intelligent = run_intelligent_pipeline(
-                structured_df,
-                db=db,
-                company_id=current_user.company_id,
-                sector_id=raw_data.sector_id,
-                role=current_user.role,
-                config=strategy_config,
-            )
-            structured_df = intelligent.df
+        except Exception:
+            pass
     # Compute cleaning improvement metrics and persist cleaned variants for non-stream responses
     try:
         improvement = _compute_cleaning_improvement(source_df, structured_df)

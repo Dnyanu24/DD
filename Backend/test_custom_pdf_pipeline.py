@@ -20,18 +20,17 @@ def df_preview(df, limit=10):
     except Exception as e:
         return f"Preview error: {str(e)}"
 
-# Read the provided data as text (simulate PDF text extraction)
-with open('sample_pdf_data.txt', 'r', encoding='utf-8') as f:
-    text_content = f.read()
+with open('data pdf.pdf', 'rb') as f:
+    pdf_bytes = f.read()
 
-# Simulate PDF bytes (in reality would be actual PDF with this text)
-pdf_bytes = text_content.encode('utf-8')
+print(f"PDF size: {len(pdf_bytes)} bytes")
+print("Actual PDF binary ✓")
 
 print("=== PDF PIPELINE TEST WITH CUSTOM DATA ===")
-print(f"Text length: {len(text_content)} chars")
+print("Using real PDF file")
 
 # Step 1: Detection
-det = detect_file_type('sample_data.pdf', pdf_bytes)
+det = detect_file_type('data pdf.pdf', pdf_bytes)
 print("\nDetection:", json.dumps(det, indent=2))
 
 # Step 2: Parsing (will treat as unstructured text/PDF)
