@@ -1,9 +1,21 @@
-# Backend Task Progress: Fix insight_generator.py SyntaxError
+# Data Analysis Software - Backend TODO
 
-## Steps:
-- [x] 1. Plan approved
-- [x] 2. Edit insight_generator.py docstring (fixed \"\"\" to """)
-- [x] 3. Verify uvicorn starts without error (syntax fixed)
-- [x] 4. Complete
+## ✅ COMPLETE
+- [x] **PDF Pipeline** - Text extraction → Multi-dataset ✓
+- [x] **File Upload** - All types → CSV RawData ✓  
+- [x] **Cleaning** - Normal + Predictive ✓
+- [x] **Import Fix** - `io` added ✓
 
+## 🔄 IN PROGRESS
+- [ ] **Auto-clean after filetype** - PDF/TXT → Clean CSV ✓
+- [ ] **Normal + Predictive** - Both after parsing ✓
 
+## 📊 PIPELINE STATUS
+```
+File Input → Detection → Filetype Parser → Normal Cleaning → Predictive Cleaning → Storage
+  ↓ PDF/TXT         ↓ CSV/DF      ↓ Impute/Dedupe  ↓ ML Impute    ↓ Clean CSV ✓
+```
+
+**RUNNING**: `python Backend/test_pipeline_checks.py` ✓
+
+**NEXT**: Test text upload → No "failed to fetch" ✓

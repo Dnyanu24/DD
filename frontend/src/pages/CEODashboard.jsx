@@ -12,7 +12,7 @@ import {
   YAxis,
 } from "recharts";
 import KPICard from "../components/KPICard";
-import { createAnnouncement, getDashboardData, getJoinRequests, reviewJoinRequest, getCeoGrowthOutlook } from "../services/api";
+import { createAnnouncement, getAnnouncements, getJoinRequests, reviewJoinRequest, getCeoGrowthOutlook } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 
 const chartColors = {
@@ -24,7 +24,6 @@ const chartColors = {
 
 export default function CEODashboard() {
   const { user } = useAuth();
-  const isCeoView = user?.role === "CEO";
   const [dashboard, setDashboard] = useState(null);
   const [growthOutlook, setGrowthOutlook] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -51,10 +50,18 @@ export default function CEODashboard() {
     }
   };
 
+  const loadAnnouncements = async () => {
+    try {
+      const announcements = await getAnnouncements();
+      console.log('Announcements:', announcements);
+    } catch (error) {
+      console.error('Announcements load failed:', error);
+    }
+  };
+
   useEffect(() => {
-    if (!isCeoView) return;
     loadJoinRequests();
-  }, [isCeoView]);
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -145,18 +152,103 @@ export default function CEODashboard() {
   return (
     <div className="space-y-6">
       {error ? <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div> : null}
-      {isCeoView ? (
-        <div className="space-y-6">
-          {/* Announcement + Requests unchanged */}
-          <div className="bg-theme-card rounded-2xl p-6 shadow-lg">
-            <h3 className="mb-4 text-lg font-semibold text-theme-primary">CEO Announcement</h3>
-            {/* ... announcement form unchanged */}
-          </div>
-          <div className="bg-theme-card rounded-2xl p-6 shadow-lg">
-            {/* ... join requests unchanged */}
-          </div>
+  {/* CEO Sections - Always Show */}
+  <div className="space-y-6">
+    <div className="bg-theme-card rounded-2xl p-6 shadow-lg">
+      <h3 className="mb-4 text-lg font-semibold text-theme-primary">CEO Announcement</h3>
+      <div className="rounded-xl border border-theme-light bg-theme-secondary p-4">
+        <p className="text-xs text-theme-muted">Post Announcement</p>
+        <div className="mt-3 grid grid-cols-1 gap-3">
+          <input
+            value={announcementTitle}
+            onChange={(e) => setAnnouncementTitle(e.target.value)}
+            placeholder="Announcement title"
+            className="rounded-lg border border-theme-light bg-theme-primary px-3 py-2 text-sm text-theme-primary"
+          />
+          <textarea
+            value={announcementMessage}
+            onChange={(e) => setAnnouncementMessage(e.target.value)}
+            placeholder="Announcement message..."
+            rows={3}
+            className="rounded-lg border border-theme-light bg-theme-primary px-3 py-2 text-sm text-theme-primary"
+          />
+          <button
+            type="button"
+            onClick={handlePostAnnouncement}
+            disabled={postingAnnouncement}
+            className="w-fit rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60"
+          >
+            {postingAnnouncement ? "Posting..." : "Post Announcement"}
+          </button>
         </div>
-      ) : null}
+      </div>
+
+      <div className="mt-6 rounded-xl border border-theme-light bg-theme-secondary p-4">
+        <div className="flex items-center justify-between">
+          <p className="text-xs text-theme-muted">Pending Join Requests</p>
+          <button
+            type="button"
+            onClick={loadJoinRequests}
+            disabled={requestsLoading}
+            className="rounded-lg border border-theme-light bg-theme-primary px-3 py-1.5 text-xs font-semibold text-theme-primary hover:bg-theme-tertiary disabled:opacity-60"
+          >
+            {requestsLoading ? "Refreshing..." : "Refresh"}
+          </button>
+        </div>
+
+        {requestsLoading ? (
+          <p className="mt-3 text-sm text-theme-muted">Loading requests...</p>
+        ) : pendingRequests.length === 0 ? (
+          <p className="mt-3 text-sm text-theme-muted">No pending requests.</p>
+        ) : (
+          <div className="mt-3 space-y-3">
+            {pendingRequests.map((request) => (
+              <div key={request.id} className="rounded-xl border border-theme-light bg-theme-primary p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-theme-primary">{request.username}</p>
+                    <p className="text-xs text-theme-muted">
+                      Role: {request.requested_role} | Company ID: {request.company_id}
+                    </p>
+                  </div>
+                  {request.requested_role_key === "sector_head" ? (
+                    <input
+                      type="number"
+                      min="1"
+                      placeholder="Sector ID"
+                      value={sectorSelections[request.id] || ""}
+                      onChange={(event) =>
+                        setSectorSelections((prev) => ({ ...prev, [request.id]: event.target.value }))
+                      }
+                      className="w-28 rounded-lg border border-theme-light bg-theme-secondary px-2 py-1 text-sm text-theme-primary"
+                    />
+                  ) : null}
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      disabled={reviewingId === request.id}
+                      onClick={() => handleReview(request, "approve")}
+                      className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+                    >
+                      Approve
+                    </button>
+                    <button
+                      type="button"
+                      disabled={reviewingId === request.id}
+                      onClick={() => handleReview(request, "reject")}
+                      className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+                    >
+                      Reject
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  </div>
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
         <KPICard title="Total Sectors" value={computedKpis.totalSectors} change="" changeType="positive" />
