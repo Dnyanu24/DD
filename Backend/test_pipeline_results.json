@@ -1,0 +1,392 @@
+{
+  "csv": {
+    "detection": {
+      "filename": "sample.csv",
+      "extension": ".csv",
+      "content_type": "",
+      "mime_type": "application/vnd.ms-excel",
+      "detected_format": "csv",
+      "file_category": "structured",
+      "recommended_pipeline": "structured",
+      "inference_source": "content"
+    },
+    "parsed_preview": [
+      {
+        "id": 1,
+        "amount": 100.0,
+        "category": "food",
+        "notes": "OK"
+      },
+      {
+        "id": 2,
+        "amount": NaN,
+        "category": "food",
+        "notes": NaN
+      },
+      {
+        "id": 3,
+        "amount": 200.0,
+        "category": NaN,
+        "notes": "note"
+      },
+      {
+        "id": 4,
+        "amount": 300.0,
+        "category": "drink",
+        "notes": "OK"
+      },
+      {
+        "id": 5,
+        "amount": NaN,
+        "category": "drink",
+        "notes": "special"
+      }
+    ],
+    "parsed_shape": [
+      6,
+      4
+    ],
+    "normal_preview": [
+      {
+        "id": 1,
+        "amount": 125.0,
+        "category": "food",
+        "notes": "OK"
+      },
+      {
+        "id": 2,
+        "amount": 250.0,
+        "category": "food",
+        "notes": "OK"
+      },
+      {
+        "id": 3,
+        "amount": 200.0,
+        "category": "food",
+        "notes": "note"
+      },
+      {
+        "id": 4,
+        "amount": 300.0,
+        "category": "drink",
+        "notes": "OK"
+      },
+      {
+        "id": 5,
+        "amount": 250.0,
+        "category": "drink",
+        "notes": "special"
+      }
+    ],
+    "predictive_preview": [
+      {
+        "id": 1,
+        "amount": 125.0,
+        "category": "food",
+        "notes": "ok"
+      },
+      {
+        "id": 2,
+        "amount": 250.0,
+        "category": "food",
+        "notes": "unknown"
+      },
+      {
+        "id": 3,
+        "amount": 200.0,
+        "category": "unknown",
+        "notes": "note"
+      },
+      {
+        "id": 4,
+        "amount": 300.0,
+        "category": "drink",
+        "notes": "ok"
+      },
+      {
+        "id": 5,
+        "amount": 250.0,
+        "category": "drink",
+        "notes": "special"
+      }
+    ]
+  },
+  "excel": {
+    "detection": {
+      "filename": "sample.xlsx",
+      "extension": ".xlsx",
+      "content_type": "",
+      "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "detected_format": "xlsx",
+      "file_category": "structured",
+      "recommended_pipeline": "structured",
+      "inference_source": "content"
+    },
+    "parsed_preview": [
+      {
+        "id": 1,
+        "sales": 100.0,
+        "category": "A",
+        "date": "2023-01-01"
+      },
+      {
+        "id": 2,
+        "sales": 100.0,
+        "category": "A",
+        "date": "2023-01-02"
+      },
+      {
+        "id": 3,
+        "sales": 150.5,
+        "category": "B",
+        "date": "2023-01-02"
+      },
+      {
+        "id": 4,
+        "sales": 200.0,
+        "category": "B",
+        "date": "2023/01/04"
+      }
+    ],
+    "parsed_shape": [
+      4,
+      4
+    ],
+    "normal_preview": [
+      {
+        "id": 1,
+        "sales": 100.0,
+        "category": "A",
+        "date": "2023-01-01 00:00:00"
+      },
+      {
+        "id": 2,
+        "sales": 100.0,
+        "category": "A",
+        "date": "2023-01-02 00:00:00"
+      },
+      {
+        "id": 3,
+        "sales": 150.5,
+        "category": "B",
+        "date": "2023-01-02 00:00:00"
+      },
+      {
+        "id": 4,
+        "sales": 192.575,
+        "category": "B",
+        "date": "NaT"
+      }
+    ],
+    "predictive_preview": [
+      {
+        "id": 1,
+        "sales": 100.0,
+        "category": "a",
+        "date": "2023-01-01 00:00:00"
+      },
+      {
+        "id": 2,
+        "sales": 100.0,
+        "category": "a",
+        "date": "2023-01-02 00:00:00"
+      },
+      {
+        "id": 3,
+        "sales": 150.5,
+        "category": "b",
+        "date": "2023-01-02 00:00:00"
+      },
+      {
+        "id": 4,
+        "sales": 192.575,
+        "category": "b",
+        "date": "NaT"
+      }
+    ]
+  },
+  "pdf": {
+    "detection": {
+      "filename": "sample.pdf",
+      "extension": ".pdf",
+      "content_type": "",
+      "mime_type": "application/pdf",
+      "detected_format": "pdf",
+      "file_category": "unstructured",
+      "recommended_pipeline": "unstructured",
+      "inference_source": "content"
+    },
+    "primary_preview": [
+      {
+        "item": "Apple",
+        "qty": "10",
+        "price": "2.50",
+        "_page": 1,
+        "_block_index": 0,
+        "_field_confidence": {
+          "item": 0.65,
+          "qty": 0.65,
+          "price": 0.65
+        },
+        "_record_confidence": 0.65,
+        "_source": "text_table"
+      },
+      {
+        "item": "Banana",
+        "qty": "5",
+        "price": "1.20",
+        "_page": 1,
+        "_block_index": 0,
+        "_field_confidence": {
+          "item": 0.65,
+          "qty": 0.65,
+          "price": 0.65
+        },
+        "_record_confidence": 0.65,
+        "_source": "text_table"
+      },
+      {
+        "item": "Cherry",
+        "qty": "20",
+        "price": "0.50",
+        "_page": 1,
+        "_block_index": 0,
+        "_field_confidence": {
+          "item": 0.65,
+          "qty": 0.65,
+          "price": 0.65
+        },
+        "_record_confidence": 0.65,
+        "_source": "text_table"
+      }
+    ],
+    "datasets": {
+      "products": {
+        "parsed_preview": [
+          {
+            "item": "Apple",
+            "qty": "10",
+            "price": "2.50",
+            "_page": 1,
+            "_block_index": 0,
+            "_field_confidence": {
+              "item": 0.65,
+              "qty": 0.65,
+              "price": 0.65
+            },
+            "_record_confidence": 0.65,
+            "_source": "text_table"
+          },
+          {
+            "item": "Banana",
+            "qty": "5",
+            "price": "1.20",
+            "_page": 1,
+            "_block_index": 0,
+            "_field_confidence": {
+              "item": 0.65,
+              "qty": 0.65,
+              "price": 0.65
+            },
+            "_record_confidence": 0.65,
+            "_source": "text_table"
+          },
+          {
+            "item": "Cherry",
+            "qty": "20",
+            "price": "0.50",
+            "_page": 1,
+            "_block_index": 0,
+            "_field_confidence": {
+              "item": 0.65,
+              "qty": 0.65,
+              "price": 0.65
+            },
+            "_record_confidence": 0.65,
+            "_source": "text_table"
+          }
+        ],
+        "normal_preview": [
+          {
+            "item": "Apple",
+            "qty": 10.0,
+            "price": 2.5,
+            "_page": 1.0,
+            "_block_index": 0.0,
+            "_field_confidence": {
+              "item": 0.65,
+              "qty": 0.65,
+              "price": 0.65
+            },
+            "_record_confidence": 0.65,
+            "_source": "text_table"
+          },
+          {
+            "item": "Banana",
+            "qty": 5.0,
+            "price": 1.2,
+            "_page": 1.0,
+            "_block_index": 0.0,
+            "_field_confidence": {
+              "item": 0.65,
+              "qty": 0.65,
+              "price": 0.65
+            },
+            "_record_confidence": 0.65,
+            "_source": "text_table"
+          },
+          {
+            "item": "Cherry",
+            "qty": 20.0,
+            "price": 0.5,
+            "_page": 1.0,
+            "_block_index": 0.0,
+            "_field_confidence": {
+              "item": 0.65,
+              "qty": 0.65,
+              "price": 0.65
+            },
+            "_record_confidence": 0.65,
+            "_source": "text_table"
+          }
+        ],
+        "predictive_preview": [
+          {
+            "item": "apple",
+            "qty": 10.0,
+            "price": 2.5,
+            "_page": 1.0,
+            "_block_index": 0.0,
+            "_field_confidence": "{'item': 0.65, 'qty': 0.65, 'price': 0.65}",
+            "_record_confidence": 0.65,
+            "_source": "text_table"
+          },
+          {
+            "item": "banana",
+            "qty": 5.0,
+            "price": 1.2,
+            "_page": 1.0,
+            "_block_index": 0.0,
+            "_field_confidence": "{'item': 0.65, 'qty': 0.65, 'price': 0.65}",
+            "_record_confidence": 0.65,
+            "_source": "text_table"
+          },
+          {
+            "item": "cherry",
+            "qty": 20.0,
+            "price": 0.5,
+            "_page": 1.0,
+            "_block_index": 0.0,
+            "_field_confidence": "{'item': 0.65, 'qty': 0.65, 'price': 0.65}",
+            "_record_confidence": 0.65,
+            "_source": "text_table"
+          }
+        ],
+        "shape": [
+          3,
+          8
+        ]
+      }
+    }
+  }
+}
