@@ -447,6 +447,24 @@ export async function generateReport(payload) {
   return data;
 }
 
+export async function downloadReport(reportId, format = "json") {
+  const res = await requestWithBaseFallback(`/api/reports/${reportId}/download?format=${encodeURIComponent(format)}`, {
+    headers: { ...getAuthHeaders() },
+  });
+  if (!res.ok) {
+    const contentType = res.headers.get("content-type") || "";
+    const data = contentType.includes("application/json") ? await res.json() : { detail: await res.text() };
+    throw new Error(data?.detail || "Failed to download report");
+  }
+  const blob = await res.blob();
+  const disposition = res.headers.get("content-disposition") || "";
+  const match = disposition.match(/filename="?([^";]+)"?/i);
+  return {
+    blob,
+    filename: match?.[1] || `report_${reportId}.${format === "txt" ? "txt" : "json"}`,
+  };
+}
+
 export async function deleteReport(reportId) {
   const res = await requestWithBaseFallback(`/api/reports/${reportId}`, {
     method: "DELETE",

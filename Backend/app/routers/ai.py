@@ -5,7 +5,7 @@ from pydantic import BaseModel
 import pandas as pd
 import numpy as np
 from app.database import SessionLocal
-from app.models import AIPrediction, AIRecommendation, Sector, RawData, CleanedData, User, Product
+from app.models import AIPrediction, AIRecommendation, Sector, RawData, CleanedData, User, Product, CompanyReport
 from app.services.ai_predictions import AIPredictionEngine
 from app.dependencies import get_current_user, require_sector_head, require_ceo
 
@@ -411,19 +411,52 @@ async def chat_assistant(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Simple context-aware assistant for SDAS without external LLM dependency."""
-    text = (payload.message or "").strip().lower()
+    """Context-aware SDAS assistant backed by live database facts."""
+    original_text = (payload.message or "").strip()
+    text = original_text.lower()
     role_raw = (getattr(current_user, "role", "") or "").strip()
     role_key = role_raw.lower().replace(" ", "_")
-    if not text:
+    page = (payload.page or "app").strip() or "app"
+
+    def has_any(*keywords: str) -> bool:
+        return any(keyword in text for keyword in keywords)
+
+    def is_exactish(*keywords: str) -> bool:
+        cleaned = " ".join(text.replace("?", " ").replace(".", " ").split())
+        return any(cleaned == keyword for keyword in keywords)
+
+    def make_response(reply: str, suggestions: Optional[List[str]] = None):
         return {
-            "reply": "Please type a question about uploads, cleaning, reports, or visualizations.",
-            "suggestions": [
-                "How many datasets are uploaded?",
-                "What cleaning algorithm should I use?",
-                "Show data quality summary",
+            "reply": reply,
+            "suggestions": suggestions or [
+                "Show my data summary",
+                "What should I do next?",
+                "Explain this page",
             ],
         }
+
+    if is_exactish("hi", "hello", "hey", "hii", "help"):
+        return make_response(
+            (
+                "Hello. I can answer SDAS questions about upload, cleaning, PDF/CSV/TXT handling, "
+                "visualizations, reports, AI models, dashboard numbers, roles, errors, and selected datasets."
+            ),
+            [
+                "Show my data summary",
+                "Explain this page",
+                "Why did my last action fail?",
+            ],
+        )
+
+    if not text:
+        return make_response(
+            "Ask me about uploads, cleaning, errors, reports, dashboards, visualizations, AI models, roles, or a specific dataset id.",
+            [
+                "How many datasets are uploaded?",
+                "Why did cleaning fail?",
+                "How do I download a report?",
+            ],
+        )
 
     sector_ids = _allowed_sector_ids(db, current_user)
     uploader_ids = _allowed_uploader_ids(db, current_user)
@@ -453,6 +486,10 @@ async def chat_assistant(
         .order_by(CleanedData.cleaned_at.desc()).first()
     latest_quality = round((latest_cleaned.quality_score * 100), 2) if latest_cleaned else 0
     role_scope = "company-wide" if role_key in ["ceo", "admin"] else "role-limited"
+    total_reports = db.query(CompanyReport).filter(
+        CompanyReport.company_id == current_user.company_id,
+        CompanyReport.created_by.in_(uploader_ids),
+    ).count() if uploader_ids != [-1] else 0
 
     # Lightweight "training by data": gather recent schema context from accessible datasets.
     recent_raw = db.query(RawData).filter(
@@ -465,100 +502,250 @@ async def chat_assistant(
             schema_cols.update(item.data[0].keys())
     schema_preview = ", ".join(sorted(list(schema_cols))[:8]) if schema_cols else "no columns detected"
 
-    if any(keyword in text for keyword in ["all company", "all sectors", "all data"]) and role_key not in ["ceo", "admin"]:
-        return {
-            "reply": (
-                "You can access only your authorized role scope. "
-                "Ask for insights from your assigned sector/company view."
+    if has_any("summary", "overview", "status", "how many", "count", "total"):
+        latest_name = f"dataset #{latest_raw.id}" if latest_raw else "none"
+        return make_response(
+            (
+                f"Your current {role_scope} scope has {total_raw} uploaded datasets, {total_cleaned} cleaned datasets, "
+                f"{total_reports} generated reports, and latest cleaned quality {latest_quality}%. "
+                f"Latest uploaded file: {latest_name}. Visible columns include: {schema_preview}."
             ),
-            "suggestions": [
+            [
+                "Which dataset should I clean next?",
+                "What reports can I download?",
+                "Why is AI Models empty?",
+            ],
+        )
+
+    selected_dataset = None
+    selected_cleaned = None
+    if payload.dataset_id:
+        selected_dataset = db.query(RawData).filter(
+            RawData.id == payload.dataset_id,
+            RawData.sector_id.in_(sector_ids),
+            RawData.uploaded_by.in_(uploader_ids),
+        ).first()
+        if selected_dataset:
+            selected_cleaned = db.query(CleanedData).filter(
+                CleanedData.raw_data_id == selected_dataset.id
+            ).order_by(CleanedData.cleaned_at.desc()).first()
+
+    if selected_dataset and has_any("this dataset", "selected dataset", "dataset", "columns", "missing", "quality", "cleaned"):
+        records = selected_dataset.data if isinstance(selected_dataset.data, list) else []
+        columns = list(records[0].keys()) if records and isinstance(records[0], dict) else []
+        total_cells = len(records) * len(columns)
+        missing_tokens = {"", "na", "n/a", "null", "none", "nan", "undefined", "unknown", "-", "--"}
+        missing_cells = 0
+        for row in records:
+            if not isinstance(row, dict):
+                continue
+            for col in columns:
+                value = row.get(col)
+                if value is None or (isinstance(value, str) and value.strip().lower() in missing_tokens):
+                    missing_cells += 1
+        missing_percent = round((missing_cells / total_cells) * 100, 2) if total_cells else 0
+        cleaned_text = (
+            f"It has a cleaned output with quality {round((selected_cleaned.quality_score or 0) * 100, 2)}%."
+            if selected_cleaned else "It is still pending cleaning."
+        )
+        return make_response(
+            f"Dataset #{selected_dataset.id} has {len(records)} rows, {len(columns)} columns, and {missing_percent}% blank cells. Columns: {', '.join(columns[:10]) or 'none detected'}. {cleaned_text}",
+            [
+                "Which cleaning algorithm should I use?",
+                "How do I visualize this dataset?",
+                "Why can PDF columns shift?",
+            ],
+        )
+
+    if any(keyword in text for keyword in ["all company", "all sectors", "all data"]) and role_key not in ["ceo", "admin"]:
+        return make_response(
+            (
+                "You can access only your authorized role scope. "
+                f"Your current scope is {role_scope}, so I can answer only from datasets visible to your role."
+            ),
+            [
                 "Show my accessible datasets",
                 "What columns exist in my scope?",
                 "How many cleaned datasets can I use?",
             ],
-        }
+        )
 
-    if "upload" in text or "dataset" in text:
+    if has_any("error", "failed", "not working", "bug", "problem", "unsupported", "not defined", "failed to fetch"):
+        if "failed to fetch" in text:
+            reply = (
+                "Failed to fetch usually means the frontend could not complete the backend request. "
+                "Check that Uvicorn is running on port 8001, then retry. If backend is running, the route may be crashing; open the backend terminal for the Python traceback."
+            )
+        elif "not defined" in text:
+            reply = (
+                "A 'not defined' frontend error means a function or variable is used without being imported or declared. "
+                "For example, the CEO dashboard needed getDashboardData imported from services/api.js."
+            )
+        elif "unsupported" in text and "file" in text:
+            reply = (
+                "Unsupported file format means the upload parser did not recognize the extension or MIME type. "
+                "Supported inputs are CSV, Excel, JSON, TXT/TSV/LOG, and text-based PDF. Scanned image PDFs need OCR before this pipeline can read them."
+            )
+        else:
+            reply = (
+                "I can help diagnose it. Tell me the exact page, action, and error text. "
+                f"Current app state: uploaded={total_raw}, cleaned={total_cleaned}, latest quality={latest_quality}%, page={page}."
+            )
+        return make_response(reply, [
+            "Backend is running but request fails",
+            "Why cleaning failed?",
+            "Which logs should I check?",
+        ])
+
+    if has_any("upload", "dataset", "file", "pdf", "csv", "excel", "json", "txt"):
         reply = (
             f"There are {total_raw} uploaded datasets. "
             f"{total_cleaned} datasets have cleaned output. "
             f"The latest upload id is {latest_raw.id if latest_raw else 'N/A'}. "
             f"Visible schema sample: {schema_preview}."
         )
+        if has_any("pdf", "invoice"):
+            reply += " For PDFs, the system extracts text/tables first. Invoice-style PDFs are converted into product rows with repeated metadata such as customer, date, invoice number, and total amount."
+        if has_any("unstructured"):
+            reply += " For unstructured CSV/TXT, the cleaning flow normalizes headers, fixes data types, imputes missing values, caps true outliers, and structures columns where possible."
         role_hint = {
             "ceo": "You can compare datasets across sectors from dashboard and reports.",
+            "admin": "You can upload, clean, review users, and check company-wide system data.",
             "data_analyst": "You can move directly to cleaning after selecting a dataset.",
             "sales_manager": "You can focus on visualization and report pages for sales insights.",
             "sector_head": "You can track only your sector data and run cleaning for your team.",
         }.get(role_key, "")
         if role_hint:
             reply = f"{reply} {role_hint}"
-        return {
-            "reply": reply,
-            "suggestions": [
+        return make_response(reply, [
                 "How do I clean the latest dataset?",
                 "Show cleaning progress steps",
                 "Which page lists uploaded data?",
             ],
-        }
+        )
 
-    if "clean" in text or "algorithm" in text or "quality" in text:
+    if has_any("clean", "algorithm", "quality", "missing", "blank", "outlier", "duplicate", "predictive", "normal cleaning"):
         reply = (
             f"Current cleaned dataset count is {total_cleaned}. "
             f"Latest quality score is {latest_quality}%. "
-            "Use full_pipeline for most cases, missing_values for null-heavy data, "
-            "duplicates for repeated rows, and outliers for distribution cleanup."
+            "Use Full Pipeline for most cases. Use Missing Value Imputation for blank-heavy data, Duplicate Removal for repeated rows, Outlier Detection when extreme values distort analysis, and Text Cleaning for messy text columns. "
+            "Normal cleaning uses conservative rules; predictive cleaning estimates blanks from numeric/categorical patterns."
         )
         if role_key == "sales_manager":
             reply = (
                 f"{reply} If cleaning controls are restricted for your role, "
                 "coordinate with Data Analyst or Sector Head and monitor final quality in visualizations."
             )
-        return {
-            "reply": reply,
-            "suggestions": [
+        return make_response(reply, [
                 "Start full pipeline cleaning",
-                "Explain ML and clustering steps",
-                "How does feedback learning improve cleaning?",
+                "Difference between normal and predictive cleaning",
+                "Why are values changing after cleaning?",
             ],
-        }
-
-    if "visual" in text or "graph" in text or "chart" in text:
-        reply = (
-            "Open the Visualizations page to see dashboard graphs based on uploaded data: "
-            "rows by sector, monthly trend, quality distribution, status split, and top datasets."
         )
-        return {
-            "reply": reply,
-            "suggestions": [
-                "Go to visualizations",
-                "Which chart shows quality distribution?",
-                "How to improve low-quality datasets?",
-            ],
-        }
 
-    if "report" in text:
-        return {
-            "reply": "Use Reports to view generated summaries and schedule outputs after cleaning and analysis steps.",
-            "suggestions": [
-                "Open reports page",
-                "What data is included in reports?",
-                "How to export report files?",
+    if has_any("visual", "graph", "chart", "dashboard", "kpi"):
+        reply = (
+            "Use Visualizations for dataset charts and the Dashboard for role KPIs. "
+            "CEO/Admin can see company-wide sector/product/upload quality summaries; other roles see their allowed scope. "
+            f"Right now your scope has {total_raw} uploads and {total_cleaned} cleaned datasets."
+        )
+        return make_response(reply, [
+                "Go to visualizations",
+                "Why is my graph empty?",
+                "What data powers CEO dashboard?",
             ],
+        )
+
+    if has_any("report", "download", "export"):
+        return make_response(
+            f"Use Reports to generate JSON/TXT summaries from your current role scope. You have {total_reports} generated reports visible. After generation, use Download JSON or Download TXT. CEO/Admin reports include CEO dashboard overview, sector breakdown, uploads, cleaned count, predictions, and quality.",
+            [
+                "How do I download a report?",
+                "What is included in CEO report?",
+                "Why report generation failed?",
+            ],
+        )
+
+    if has_any(
+        "ai model",
+        "prediction",
+        "forecast",
+        "growth",
+        "investment",
+        "invest",
+        "best sector",
+        "best product",
+        "top sector",
+        "top product",
+        "recommendation",
+    ):
+        if role_key in ["ceo", "admin"]:
+            try:
+                outlook = await get_ceo_growth_outlook(db=db, current_user=current_user)
+                summary = outlook.get("summary", {})
+                reply = (
+                    f"AI Models currently sees {summary.get('sector_count', 0)} sectors, projected growth {summary.get('projected_growth_percent', 0)}%, "
+                    f"average confidence {summary.get('avg_confidence', 0)}%, best sector {summary.get('top_sector') or 'no signal'}, and best product {summary.get('top_product') or 'no signal'}."
+                )
+            except Exception:
+                reply = "AI Models uses cleaned data first and raw data fallback second to estimate growth, confidence, and investment recommendations."
+        else:
+            reply = "AI predictions are role-scoped. Clean more datasets to improve confidence, then check AI Models for readiness and recommendations."
+        return make_response(reply, [
+            "How is AI confidence calculated?",
+            "Why AI Models show no signal?",
+            "What should CEO invest in?",
+        ])
+
+    if has_any("role", "permission", "access", "ceo", "admin", "sector head", "data analyst", "sales manager"):
+        role_explain = {
+            "ceo": "CEO can view company-wide dashboards, role management, uploads, cleaning, AI models, visualizations, and reports.",
+            "admin": "Admin can manage users/settings and view company-level operational data.",
+            "data_analyst": "Data Analyst focuses on upload, cleaning, AI models, reports, and visualizations.",
+            "sales_manager": "Sales Manager focuses on sales dashboards, visualizations, uploads, and reports.",
+            "sector_head": "Sector Head works within an assigned sector and can upload, clean, visualize, and report sector data.",
         }
+        return make_response(
+            f"Your role is {role_raw or 'unknown'} with {role_scope} access. {role_explain.get(role_key, 'Your available pages depend on your assigned role permissions.')}",
+            [
+                "Why can I not access all company data?",
+                "How to approve join requests?",
+                "What pages can my role use?",
+            ],
+        )
+
+    if has_any("how", "what", "why", "where", "when", "help", "explain"):
+        page_guides = {
+            "dashboard": "Dashboard summarizes role-specific KPIs, announcements, requests, trends, and recommendations.",
+            "upload": "Upload stores the original file, parses supported formats, profiles errors, and makes the dataset available for cleaning.",
+            "cleaning": "Cleaning runs selected algorithms, streams progress, stores cleaned datasets, and supports download/visualization.",
+            "models": "AI Models turns raw/cleaned company data into growth, confidence, product, and investment signals.",
+            "visualizations": "Visualizations creates charts from uploaded or cleaned datasets.",
+            "reports": "Reports generates and downloads JSON/TXT summaries using dashboard-style metrics.",
+            "roles": "Role Management handles company users, role assignment, and join requests.",
+            "settings": "Settings stores your notification, AI, and data preferences.",
+        }
+        return make_response(
+            f"You are on {page}. {page_guides.get(page, 'I can answer about SDAS workflows, data quality, cleaning, reports, AI, and role access.')} Current totals: uploaded={total_raw}, cleaned={total_cleaned}, reports={total_reports}, schema sample={schema_preview}.",
+            [
+                "What should I do next?",
+                "Show current system summary",
+                "Explain cleaning pipeline",
+            ],
+        )
 
     page_hint = f" on {payload.page}" if payload.page else ""
-    return {
-        "reply": (
-            f"I can help with uploads, cleaning, visualizations, and reports{page_hint}. "
-            f"Current totals: uploaded={total_raw}, cleaned={total_cleaned}, scope={role_scope}. Ask a specific action."
+    return make_response(
+        (
+            f"I can help with SDAS questions about uploads, cleaning, PDFs/CSVs, visualizations, AI models, reports, roles, and errors{page_hint}. "
+            f"Live context: uploaded={total_raw}, cleaned={total_cleaned}, reports={total_reports}, latest quality={latest_quality}%, scope={role_scope}."
         ),
-        "suggestions": [
-            "How to upload and clean a dataset?",
-            "Show cleaning best algorithm",
-            "How to view dashboard graphs?",
+        [
+            "Show my data summary",
+            "Why did my last action fail?",
+            "How do I download reports?",
         ],
-    }
+    )
 
 @router.post("/predict/sales")
 async def predict_sales(

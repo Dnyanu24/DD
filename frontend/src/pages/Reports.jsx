@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import KPICard from "../components/KPICard";
-import { deleteReport, generateReport, getReports } from "../services/api";
+import { deleteReport, downloadReport, generateReport, getReports } from "../services/api";
 
 export default function Reports() {
   const [selectedReport, setSelectedReport] = useState("monthly_summary");
   const [generatedReports, setGeneratedReports] = useState([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [downloadingId, setDownloadingId] = useState(null);
   const [error, setError] = useState("");
 
   const reports = [
@@ -86,20 +87,48 @@ export default function Reports() {
 
   const selectedReportMeta = reports.find((r) => r.id === selectedReport);
 
+  const saveBlob = ({ blob, filename }) => {
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  };
+
   const handleGenerate = async () => {
     setCreating(true);
     setError("");
     try {
-      await generateReport({
+      const created = await generateReport({
         title: selectedReportMeta?.name || "Organization Report",
         report_type: selectedReport,
         notes: selectedReportMeta?.description || "",
       });
       await loadGeneratedReports();
+      if (created?.id) {
+        const file = await downloadReport(created.id, "json");
+        saveBlob(file);
+      }
     } catch (err) {
       setError(err.message || "Failed to generate report.");
     } finally {
       setCreating(false);
+    }
+  };
+
+  const handleDownloadGenerated = async (reportId, format = "json") => {
+    setDownloadingId(reportId);
+    setError("");
+    try {
+      const file = await downloadReport(reportId, format);
+      saveBlob(file);
+    } catch (err) {
+      setError(err.message || "Failed to download report.");
+    } finally {
+      setDownloadingId(null);
     }
   };
 
@@ -255,6 +284,20 @@ export default function Reports() {
                   <div key={item.id} className="rounded bg-gray-700 p-2">
                     <p className="text-xs text-white font-semibold">{item.title}</p>
                     <p className="text-[11px] text-gray-400">{item.created_at ? new Date(item.created_at).toLocaleString() : "-"}</p>
+                    <button
+                      onClick={() => handleDownloadGenerated(item.id, "json")}
+                      disabled={downloadingId === item.id}
+                      className="mt-1 mr-3 text-[11px] text-cyan-300 hover:text-cyan-200 disabled:opacity-60"
+                    >
+                      {downloadingId === item.id ? "Downloading..." : "Download JSON"}
+                    </button>
+                    <button
+                      onClick={() => handleDownloadGenerated(item.id, "txt")}
+                      disabled={downloadingId === item.id}
+                      className="mt-1 mr-3 text-[11px] text-emerald-300 hover:text-emerald-200 disabled:opacity-60"
+                    >
+                      Download TXT
+                    </button>
                     <button
                       onClick={() => handleDeleteGenerated(item.id)}
                       className="mt-1 text-[11px] text-red-400 hover:text-red-300"

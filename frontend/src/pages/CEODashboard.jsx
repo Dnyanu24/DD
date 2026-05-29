@@ -12,7 +12,7 @@ import {
   YAxis,
 } from "recharts";
 import KPICard from "../components/KPICard";
-import { createAnnouncement, getAnnouncements, getJoinRequests, reviewJoinRequest, getCeoGrowthOutlook } from "../services/api";
+import { createAnnouncement, getAnnouncements, getJoinRequests, reviewJoinRequest, getCeoGrowthOutlook, getDashboardData } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 
 const chartColors = {
