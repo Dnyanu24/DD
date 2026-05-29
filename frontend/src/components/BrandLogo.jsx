@@ -1,17 +1,22 @@
-import { Link } from "react-router-dom";
+import { BarChart3 } from "lucide-react";
 
-export default function BrandLogo({ to = "/", compact = false }) {
+export default function BrandLogo({ compact = false }) {
+  const iconSize = compact ? "h-8 w-8" : "h-10 w-10";
+
   return (
-    <Link to={to} className="inline-flex items-center gap-3">
-      <div className="relative flex h-12 w-12 items-center justify-center overflow-hidden rounded-2xl border border-white/20 bg-[linear-gradient(145deg,#0f766e,#14b8a6_55%,#67e8f9)] shadow-[0_18px_40px_-18px_rgba(20,184,166,0.75)]">
-        <img src="/icon.svg" alt="SDAS logo" className="h-7 w-7 drop-shadow-sm" />
+    <div className="inline-flex items-center gap-3">
+      <div
+        className={`${iconSize} flex shrink-0 items-center justify-center rounded-lg bg-teal-600 text-white shadow-theme-md dark:bg-teal-500 dark:text-slate-950`}
+        aria-hidden="true"
+      >
+        <BarChart3 className={compact ? "h-5 w-5" : "h-6 w-6"} />
       </div>
-      {!compact ? (
+      {!compact && (
         <div className="leading-tight">
-          <div className="text-lg font-semibold tracking-[0.18em] text-theme-primary">SDAS</div>
-          <div className="text-xs uppercase tracking-[0.24em] text-theme-muted">Smart Data Analytics System</div>
+          <p className="text-base font-bold text-theme-primary">SDAS</p>
+          <p className="text-xs font-medium text-theme-muted">Smart Data Analytics</p>
         </div>
-      ) : null}
-    </Link>
+      )}
+    </div>
   );
 }

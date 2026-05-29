@@ -5,14 +5,23 @@ import pandas as pd
 import numpy as np
 import json
 import math
+import re
+import uuid
 from datetime import datetime
+from pathlib import Path
 
 from app.database import SessionLocal
 from app.models import RawData, CleanedData, DataQualityScore, Sector, Product, User
 from app.dependencies import get_current_user
-from app.services.file_ingest import load_dataframe_from_uploadfile
+from app.services.file_ingest import (
+    build_ingest_report,
+    load_dataframe_from_upload_bytes,
+    repair_dataframe_semantics,
+)
+from app.services.data_profiler import profile_dataframe
 
 router = APIRouter()
+UPLOAD_STORAGE_ROOT = Path(__file__).resolve().parents[2] / "storage" / "uploads"
 
 def get_db():
     db = SessionLocal()
@@ -70,9 +79,118 @@ def _sanitize_json_payload(value):
         return [_sanitize_json_payload(v) for v in value.tolist()]
     return value
 
-def _adaptive_upload_config(db: Session, df: pd.DataFrame, *, company_id: int, sector_id: int) -> dict:
+
+def _dataset_missing_profile(records: list) -> dict:
+    if not records or not isinstance(records[0], dict):
+        return {
+            "missing_cells": 0,
+            "total_cells": 0,
+            "missing_percent": 0.0,
+            "missing_columns": [],
+        }
+
+    columns = list(records[0].keys())
+    missing_by_column = {str(col): 0 for col in columns}
+    missing_tokens = {"", "na", "n/a", "null", "none", "nan", "undefined", "unknown", "-", "--"}
+
+    for row in records:
+        if not isinstance(row, dict):
+            continue
+        for col in columns:
+            value = row.get(col)
+            is_missing = value is None
+            if not is_missing and isinstance(value, str):
+                is_missing = value.strip().lower() in missing_tokens
+            if is_missing:
+                missing_by_column[str(col)] += 1
+
+    total_cells = len(records) * len(columns)
+    missing_cells = sum(missing_by_column.values())
+    missing_percent = round((missing_cells / total_cells) * 100, 2) if total_cells else 0.0
+    missing_columns = [
+        {
+            "column": column,
+            "missing": count,
+            "percent": round((count / len(records)) * 100, 2) if records else 0.0,
+        }
+        for column, count in missing_by_column.items()
+        if count > 0
+    ]
+    missing_columns.sort(key=lambda item: item["missing"], reverse=True)
+
+    return {
+        "missing_cells": missing_cells,
+        "total_cells": total_cells,
+        "missing_percent": missing_percent,
+        "missing_columns": missing_columns[:8],
+    }
+
+
+def _safe_filename(filename: str) -> str:
+    base = Path(filename or "uploaded_file").name
+    safe = re.sub(r"[^a-zA-Z0-9._-]+", "_", base).strip("._")
+    return safe or "uploaded_file"
+
+
+def _store_original_upload(filename: str, content_type: str | None, data: bytes) -> dict:
+    originals_dir = UPLOAD_STORAGE_ROOT / "originals"
+    originals_dir.mkdir(parents=True, exist_ok=True)
+    stored_name = (
+        f"{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_"
+        f"{uuid.uuid4().hex[:8]}_{_safe_filename(filename)}"
+    )
+    stored_path = originals_dir / stored_name
+    stored_path.write_bytes(data)
+    backend_root = Path(__file__).resolve().parents[2]
+
+    return {
+        "filename": filename or "uploaded_file",
+        "stored_name": stored_name,
+        "stored_path": str(stored_path.relative_to(backend_root)),
+        "size_bytes": len(data),
+        "content_type": content_type or "",
+    }
+
+
+def _write_upload_manifest(raw_data_id: int, manifest: dict) -> str:
+    manifests_dir = UPLOAD_STORAGE_ROOT / "manifests"
+    manifests_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = manifests_dir / f"raw_{raw_data_id}.json"
+    manifest_path.write_text(
+        json.dumps(_sanitize_json_payload(manifest), indent=2),
+        encoding="utf-8",
+    )
+    backend_root = Path(__file__).resolve().parents[2]
+    return str(manifest_path.relative_to(backend_root))
+
+
+def _read_upload_manifest(raw_data_id: int) -> dict:
+    manifest_path = UPLOAD_STORAGE_ROOT / "manifests" / f"raw_{raw_data_id}.json"
+    if not manifest_path.exists():
+        return {}
+    try:
+        return json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _delete_upload_artifacts(raw_data_id: int) -> None:
+    backend_root = Path(__file__).resolve().parents[2].resolve()
+    storage_root = UPLOAD_STORAGE_ROOT.resolve()
+    manifest = _read_upload_manifest(raw_data_id)
+
+    original_path = (manifest.get("original_file") or {}).get("stored_path")
+    if original_path:
+        candidate = (backend_root / original_path).resolve()
+        if storage_root in candidate.parents and candidate.exists():
+            candidate.unlink()
+
+    manifest_path = (UPLOAD_STORAGE_ROOT / "manifests" / f"raw_{raw_data_id}.json").resolve()
+    if storage_root in manifest_path.parents and manifest_path.exists():
+        manifest_path.unlink()
+
+def _adaptive_upload_config(db: Session, df: pd.DataFrame) -> dict:
     from app.services.feedback_learning import FeedbackLearningEngine
-    from app.services.meta_learner import MetaLearner
     learning_engine = FeedbackLearningEngine()
 
     numeric_cols = df.select_dtypes(include=[np.number]).columns
@@ -98,17 +216,6 @@ def _adaptive_upload_config(db: Session, df: pd.DataFrame, *, company_id: int, s
         config["impute_strategy"] = "median"
         config["outlier_method"] = "iqr"
 
-    # Meta-learning warm start: use best_config from similar historical datasets (if any).
-    try:
-        meta = MetaLearner(db).suggest_pipeline(company_id=company_id, sector_id=sector_id, df=df)
-        if meta and isinstance(meta.get("best_config"), dict):
-            # Meta suggestion wins for core knobs; keep any extra defaults from feedback learning.
-            config.update(meta["best_config"])
-            config["_meta_match"] = meta.get("match")
-    except Exception:
-        # Meta-learner should never break uploads.
-        pass
-
     return config
 
 
@@ -128,33 +235,52 @@ def _role_scoped_user_ids_query(db: Session, current_user: User):
 @router.post("/upload")
 async def upload_data(
     file: UploadFile = File(...),
-    sector_id: int = Form(...),
+    sector_id: Optional[int] = Form(None),
     product_id: Optional[int] = Form(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """Upload multi-sector data with metadata tagging"""
 
-    sector = db.query(Sector).filter(
-        Sector.id == sector_id,
-        Sector.company_id == current_user.company_id
-    ).first()
+    if not sector_id:
+        sector_query = db.query(Sector).filter(Sector.company_id == current_user.company_id)
+        if current_user.role == "sector_head":
+            sector_query = sector_query.filter(Sector.id == current_user.sector_id)
+        sector = sector_query.order_by(Sector.id.asc()).first()
+        if not sector:
+            default_sector = Sector(name="General", company_id=current_user.company_id)
+            db.add(default_sector)
+            db.commit()
+            db.refresh(default_sector)
+            sector = default_sector
+        sector_id = sector.id
+    else:
+        sector = db.query(Sector).filter(
+            Sector.id == sector_id,
+            Sector.company_id == current_user.company_id
+        ).first()
     if not sector:
         raise HTTPException(status_code=403, detail="Access denied: Sector not in your company")
     if current_user.role == 'sector_head' and current_user.sector_id != sector_id:
         raise HTTPException(status_code=403, detail="Access denied: Can only upload to assigned sector")
 
-    # Read file based on extension (csv/xlsx/json/txt/pdf where supported).
     try:
-        df = load_dataframe_from_uploadfile(file)
+        file_bytes = await file.read()
+        original_file = _store_original_upload(file.filename, file.content_type, file_bytes)
+        df = repair_dataframe_semantics(
+            load_dataframe_from_upload_bytes(file.filename, file_bytes, file.content_type)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    except Exception:
-        raise HTTPException(status_code=400, detail="Unsupported file format")
 
     # Metadata tagging
     # Store raw data
     safe_records = _to_json_safe_records(df)
+    schema_profile = profile_dataframe(df)
+    extraction = build_ingest_report(df, file.filename, file.content_type)
+    ingest_warnings = extraction["warnings"]
     raw_data_entry = RawData(
         sector_id=sector_id,
         product_id=product_id,
@@ -165,8 +291,18 @@ async def upload_data(
     db.commit()
     db.refresh(raw_data_entry)
 
+    manifest_path = _write_upload_manifest(raw_data_entry.id, {
+        "raw_data_id": raw_data_entry.id,
+        "sector_id": sector_id,
+        "product_id": product_id,
+        "original_file": original_file,
+        "extraction": extraction,
+        "uploaded_by": current_user.id,
+        "uploaded_at": datetime.utcnow().isoformat(),
+    })
+
     # Upload keeps dataset in pending state; cleaning happens from Data Cleaning page.
-    optimal_config = _adaptive_upload_config(db, df, company_id=current_user.company_id, sector_id=sector_id)
+    optimal_config = _adaptive_upload_config(db, df)
 
     payload = {
         "message": "Data uploaded successfully. Run cleaning from Data Cleaning page.",
@@ -175,7 +311,13 @@ async def upload_data(
         "preview": safe_records[:5],
         "quality_scores": {},
         "logs": [],
-        "adaptive_config": optimal_config
+        "adaptive_config": optimal_config,
+        "schema_profile": schema_profile,
+        "ingest_warnings": ingest_warnings,
+        "file_type": extraction["file_type"],
+        "original_file": original_file,
+        "extraction": extraction,
+        "manifest_path": manifest_path,
     }
     return _sanitize_json_payload(payload)
 
@@ -246,29 +388,25 @@ async def get_uploaded_data(
                 
                 # Get cleaned data info
                 cleaned = db.query(CleanedData).filter(CleanedData.raw_data_id == data.id).first()
+                manifest = _read_upload_manifest(data.id)
+                original_file = manifest.get("original_file") or {}
+                extraction = manifest.get("extraction") or {}
                 
                 # Safely get row and column counts
                 row_count = 0
                 column_count = 0
-                missing_cells = 0
-                missing_percent = 0.0
                 if data.data and isinstance(data.data, list) and len(data.data) > 0:
                     row_count = len(data.data)
                     if isinstance(data.data[0], dict):
                         column_count = len(data.data[0].keys())
-                        total_cells = max(row_count * max(column_count, 1), 1)
-                        missing_cells = sum(
-                            1
-                            for row in data.data
-                            if isinstance(row, dict)
-                            for value in row.values()
-                            if value in [None, ""]
-                        )
-                        missing_percent = round((missing_cells / total_cells) * 100, 2)
+                missing_profile = _dataset_missing_profile(data.data if isinstance(data.data, list) else [])
                 
                 result.append({
                     "id": data.id,
-                    "name": f"dataset_{data.id}.csv",
+                    "name": original_file.get("filename") or f"dataset_{data.id}",
+                    "file_type": extraction.get("file_type") or "unknown",
+                    "original_file": original_file,
+                    "extraction": extraction,
                     "sector_id": data.sector_id,
                     "sector_name": sector_name,
                     "product_id": data.product_id,
@@ -277,13 +415,14 @@ async def get_uploaded_data(
                     "uploaded_at": data.uploaded_at.isoformat() if hasattr(data, 'uploaded_at') and data.uploaded_at else None,
                     "row_count": row_count,
                     "column_count": column_count,
-                    "missing_cells": missing_cells,
-                    "missing_percent": missing_percent,
+                    "missing_cells": missing_profile["missing_cells"],
+                    "total_cells": missing_profile["total_cells"],
+                    "missing_percent": missing_profile["missing_percent"],
+                    "missing_columns": missing_profile["missing_columns"],
                     "columns": list(data.data[0].keys()) if row_count > 0 and isinstance(data.data[0], dict) else [],
                     "has_cleaned_data": cleaned is not None,
                     "cleaned_data_id": cleaned.id if cleaned else None,
-                    "quality_score": cleaned.quality_score if cleaned else None,
-                    "estimated_quality_score": round(max(0.0, 1 - (missing_percent / 100)), 4),
+                    "quality_score": cleaned.quality_score if cleaned else None
                 })
             except Exception as item_error:
                 # Skip items that cause errors
@@ -329,4 +468,5 @@ async def delete_uploaded_dataset(
 
     db.delete(raw_data)
     db.commit()
+    _delete_upload_artifacts(data_id)
     return {"message": "Dataset deleted successfully", "deleted_data_id": data_id}

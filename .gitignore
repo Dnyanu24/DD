@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+Backend/logs/
+Backend/app/reports/*
+!Backend/app/reports/.gitkeep
+
+frontend/dist/
+frontend/node_modules/

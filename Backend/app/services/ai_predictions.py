@@ -3,8 +3,7 @@ import numpy as np
 from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error, r2_score, accuracy_score, f1_score
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import mean_squared_error, r2_score
 import logging
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
@@ -173,61 +172,23 @@ class AIPredictionEngine:
         # Split data
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-        # Decide task type (classification vs regression) based on target uniqueness.
-        y_series = pd.Series(y_train).dropna()
-        unique_count = int(y_series.nunique()) if len(y_series) else 0
-        is_classification = unique_count > 0 and unique_count <= 10
+        # Train model
+        model = RandomForestRegressor(n_estimators=100, random_state=42)
+        model.fit(X_train, y_train)
 
-        if is_classification:
-            model = RandomForestClassifier(n_estimators=200, random_state=42)
-            model.fit(X_train, y_train)
-            y_pred = model.predict(X_test)
-            # Uncertainty: 1 - max predicted probability (lower is better).
-            uncertainty = None
-            try:
-                proba = model.predict_proba(X_test)
-                maxp = float(np.max(proba, axis=1).mean()) if len(proba) else 0.5
-                uncertainty = round(float(max(0.0, min(1.0, 1 - maxp))), 4)
-            except Exception:
-                uncertainty = None
-            acc = float(accuracy_score(y_test, y_pred))
-            f1 = float(f1_score(y_test, y_pred, average="weighted")) if unique_count > 2 else float(f1_score(y_test, y_pred, average="binary"))
-            confidence = max(0.05, min(0.98, acc))
-            metrics = {"accuracy": round(acc, 4), "f1": round(f1, 4)}
-            predicted_risk = float(np.mean(y_pred.astype(float))) if hasattr(y_pred, "astype") else float(np.mean(y_pred))
-            model_type = "random_forest_classifier"
-            test_score = acc
-        else:
-            model = RandomForestRegressor(n_estimators=200, random_state=42)
-            model.fit(X_train, y_train)
-            y_pred = model.predict(X_test)
-            # Uncertainty: stddev across trees (approx).
-            uncertainty = None
-            try:
-                if hasattr(model, "estimators_"):
-                    per_tree = np.vstack([est.predict(X_test) for est in model.estimators_])
-                    uncertainty = round(float(np.std(per_tree, axis=0).mean()), 6)
-            except Exception:
-                uncertainty = None
-            rmse = float(np.sqrt(mean_squared_error(y_test, y_pred)))
-            r2 = float(r2_score(y_test, y_pred))
-            confidence = self.calculate_confidence(y_test, y_pred)
-            metrics = {"rmse": round(rmse, 4), "r2": round(r2, 4)}
-            predicted_risk = float(np.mean(y_pred))
-            model_type = "random_forest_regressor"
-            test_score = float(model.score(X_test, y_test))
+        # Make predictions
+        y_pred = model.predict(X_test)
+        confidence = self.calculate_confidence(y_test, y_pred)
 
-        # Feature importance (both RF classifier/regressor expose it)
-        feature_importance = dict(zip(features, getattr(model, "feature_importances_", np.zeros(len(features)))))
+        # Feature importance
+        feature_importance = dict(zip(features, model.feature_importances_))
 
         result = {
-            "predicted_risk": predicted_risk,
-            "confidence": confidence,
-            "uncertainty": uncertainty,
-            "feature_importance": feature_importance,
-            "model_type": model_type,
-            "test_score": float(test_score),
-            "metrics": metrics,
+            'predicted_risk': float(np.mean(y_pred)),
+            'confidence': confidence,
+            'feature_importance': feature_importance,
+            'model_type': 'random_forest',
+            'test_score': float(model.score(X_test, y_test))
         }
 
         self.log_prediction('risk_prediction', {

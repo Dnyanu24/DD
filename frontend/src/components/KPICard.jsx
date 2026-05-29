@@ -4,7 +4,7 @@ export default function KPICard({ title, value, change, changeType }) {
   const isPositive = changeType === "positive";
 
   return (
-    <div className="bg-theme-card p-6 rounded-lg shadow-theme border border-theme-light transition-colors duration-300">
+    <div className="bg-theme-card p-6 rounded-lg shadow-lg border border-theme-medium transition-colors duration-300">
       <div className="flex justify-between items-start">
         <div>
           <p className="text-theme-muted text-sm font-medium">{title}</p>

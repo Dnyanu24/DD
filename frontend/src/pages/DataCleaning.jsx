@@ -53,6 +53,13 @@ function normalizeDataset(dataset, index) {
     records: Number(dataset.records ?? dataset.row_count ?? 0),
     qualityScore: Math.round(Number(dataset.qualityScore ?? dataset.quality_score ?? dataset.estimated_quality_score ?? 0) * 100) / 100,
     missingPercent: Number(dataset.missingPercent ?? dataset.missing_percent ?? 0),
+    missingCells: Number(dataset.missingCells ?? dataset.missing_cells ?? 0),
+    totalCells: Number(dataset.totalCells ?? dataset.total_cells ?? 0),
+    missingColumns: Array.isArray(dataset.missingColumns)
+      ? dataset.missingColumns
+      : Array.isArray(dataset.missing_columns)
+        ? dataset.missing_columns
+        : [],
     status: dataset.has_cleaned_data ? "Cleaned" : "Pending",
     columns: Array.isArray(dataset.columns) ? dataset.columns : [],
   };
@@ -310,6 +317,13 @@ export default function DataCleaning() {
                 `[${now}] Cleaned percentage: ${data.cleaning_summary.cleaned_percent}%`,
               ]);
             }
+            if (data?.schema_profile_after?.column_types) {
+              const schemaText = Object.entries(data.schema_profile_after.column_types)
+                .slice(0, 12)
+                .map(([name, type]) => `${name}:${type}`)
+                .join(", ");
+              setCleaningLogs((prev) => [...prev, `[${now}] Column type check => ${schemaText}`]);
+            }
             setUploadedData((prev) =>
               prev.map((item) =>
                 item.id === selectedDataset.id
@@ -345,6 +359,13 @@ export default function DataCleaning() {
             `[${formatTime(new Date())}] Cleaned percentage: ${fallback.cleaning_summary.cleaned_percent}%`,
           ]);
         }
+        if (fallback?.schema_profile_after?.column_types) {
+          const schemaText = Object.entries(fallback.schema_profile_after.column_types)
+            .slice(0, 12)
+            .map(([name, type]) => `${name}:${type}`)
+            .join(", ");
+          setCleaningLogs((prev) => [...prev, `[${formatTime(new Date())}] Column type check => ${schemaText}`]);
+        }
       }
       await loadData();
       try {
@@ -368,6 +389,13 @@ export default function DataCleaning() {
             ...prev,
             `[${formatTime(new Date())}] Cleaned percentage: ${fallback.cleaning_summary.cleaned_percent}%`,
           ]);
+        }
+        if (fallback?.schema_profile_after?.column_types) {
+          const schemaText = Object.entries(fallback.schema_profile_after.column_types)
+            .slice(0, 12)
+            .map(([name, type]) => `${name}:${type}`)
+            .join(", ");
+          setCleaningLogs((prev) => [...prev, `[${formatTime(new Date())}] Column type check => ${schemaText}`]);
         }
         await loadData();
         try {
@@ -460,11 +488,24 @@ export default function DataCleaning() {
     if (!selectedDataset) return null;
 
     const missingPercent = Number(selectedDataset.missingPercent || 0);
+    const missingCells = Number(selectedDataset.missingCells || 0);
+    const totalCells = Number(selectedDataset.totalCells || 0);
+    const missingColumns = Array.isArray(selectedDataset.missingColumns)
+      ? selectedDataset.missingColumns
+      : [];
+    const columnText = missingColumns.length
+      ? ` Most affected: ${missingColumns
+          .slice(0, 3)
+          .map((item) => `${item.column} (${item.missing})`)
+          .join(", ")}.`
+      : " No blank columns were detected in the stored dataset.";
+    const baseMessage = `${missingPercent}% blank (${missingCells}/${totalCells || 0} cells).${columnText}`;
+
     if (missingPercent >= 40) {
       return {
         tone: "high",
         title: "High missing-value rate",
-        message: `${missingPercent}% of cells are blank. Predictive fill may be unreliable unless the remaining columns are strongly related.`,
+        message: `${baseMessage} Predictive fill may be unreliable unless the remaining columns are strongly related.`,
         className: "border-red-200 bg-red-50 text-red-800 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-200",
       };
     }
@@ -472,14 +513,14 @@ export default function DataCleaning() {
       return {
         tone: "medium",
         title: "Moderate missing-value rate",
-        message: `${missingPercent}% of cells are blank. Predictive fill is reasonable, but review the output before using it for reporting or AI predictions.`,
+        message: `${baseMessage} Predictive fill is reasonable, but review the output before using it for reporting or AI predictions.`,
         className: "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200",
       };
     }
     return {
       tone: "low",
       title: "Low missing-value rate",
-      message: `${missingPercent}% of cells are blank. Predictive fill should be relatively stable if the dataset has consistent patterns.`,
+      message: `${baseMessage} Predictive fill should be relatively stable if the dataset has consistent patterns.`,
       className: "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-200",
     };
   }, [selectedDataset]);

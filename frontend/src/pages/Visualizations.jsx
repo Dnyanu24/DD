@@ -38,6 +38,19 @@ function bucket(dateValue, grain) {
   return date.toLocaleString("en-US", { month: "short", year: "numeric" });
 }
 
+function bucketSortKey(dateValue, grain) {
+  const date = new Date(dateValue);
+  if (!Number.isFinite(date.getTime())) return null;
+  if (grain === "quarterly") return (date.getFullYear() * 4) + Math.floor(date.getMonth() / 3);
+  if (grain === "weekly") {
+    const start = new Date(date.getFullYear(), 0, 1);
+    const week = Math.ceil((((date - start) / 86400000) + start.getDay() + 1) / 7);
+    // 60 is a safe upper bound for weeks; keeps ordering stable across years.
+    return (date.getFullYear() * 60) + week;
+  }
+  return (date.getFullYear() * 12) + date.getMonth();
+}
+
 function buildMonthlyWaveSeries(rows, dateCol, valueCol) {
   if (!dateCol || !valueCol) return [];
   const map = new Map();
@@ -450,7 +463,7 @@ export default function Visualizations() {
   const [quality, setQuality] = useState("all");
   const [trendStyle, setTrendStyle] = useState("area");
   const [compareStyle, setCompareStyle] = useState("stacked");
-  const [distributionStyle, setDistributionStyle] = useState("donut");
+  const [distributionStyle, setDistributionStyle] = useState("stackedWave");
   const [rankMetric, setRankMetric] = useState("row_count");
   const [scatterColorBy, setScatterColorBy] = useState("status");
   const [matrixMetric, setMatrixMetric] = useState("quality");
@@ -558,9 +571,9 @@ export default function Visualizations() {
       setGlobalError("");
       setGlobalLoading(true);
       try {
-        const res = await getCleanedDatasets();
-        const datasets = Array.isArray(res?.data) ? res.data : [];
-        const selected = datasets.slice(0, 6); // keep it fast; we merge previews
+         const res = await getCleanedDatasets();
+         const datasets = Array.isArray(res?.data) ? res.data : [];
+         const selected = datasets.slice(0, 12); // keep it fast; we merge previews (row cap below keeps it snappy)
 
         const previews = [];
         for (const item of selected) {
@@ -861,15 +874,25 @@ export default function Visualizations() {
     const avgQuality = totalDatasets ? Math.round((filtered.reduce((sum, row) => sum + row.quality_score, 0) / totalDatasets) * 100) : 0;
     const cleanedCoverage = totalDatasets ? Math.round((filtered.filter((row) => row.has_cleaned_data).length / totalDatasets) * 100) : 0;
     const trendMap = new Map();
+    const qualityBandTrendMap = new Map();
     const groupMap = new Map();
 
     filtered.forEach((row) => {
-      const key = bucket(row.time_reference, granularity);
-      const t = trendMap.get(key) || { bucket: key, row_count: 0, dataset_count: 0, qualityTotal: 0 };
+      const label = bucket(row.time_reference, granularity);
+      const sortKey = bucketSortKey(row.time_reference, granularity);
+      const mapKey = sortKey != null ? sortKey : label;
+
+      const t = trendMap.get(mapKey) || { bucket: label, sortKey, row_count: 0, dataset_count: 0, qualityTotal: 0 };
       t.row_count += row.row_count;
       t.dataset_count += 1;
       t.qualityTotal += row.quality_score * 100;
-      trendMap.set(key, t);
+      trendMap.set(mapKey, t);
+
+      const qb = qualityBand(row.quality_score);
+      const qt = qualityBandTrendMap.get(mapKey) || { bucket: label, sortKey, High: 0, Medium: 0, Low: 0, total: 0 };
+      qt[qb] += 1;
+      qt.total += 1;
+      qualityBandTrendMap.set(mapKey, qt);
 
       const gk = groupBy === "status" ? row.status : row[groupBy] || "Unknown";
       const g = groupMap.get(gk) || { name: gk, row_count: 0, dataset_count: 0, qualityTotal: 0, cleanedRows: 0, pendingRows: 0 };
@@ -880,11 +903,33 @@ export default function Visualizations() {
       groupMap.set(gk, g);
     });
 
-    const trend = Array.from(trendMap.values()).map((item) => ({
+    const trend = Array.from(trendMap.values())
+      .sort((a, b) => {
+        if (a.sortKey == null && b.sortKey == null) return String(a.bucket).localeCompare(String(b.bucket));
+        if (a.sortKey == null) return 1;
+        if (b.sortKey == null) return -1;
+        return a.sortKey - b.sortKey;
+      })
+      .map((item) => ({
       ...item,
       quality: item.dataset_count ? Math.round(item.qualityTotal / item.dataset_count) : 0,
       metricValue: metric === "row_count" ? item.row_count : metric === "dataset_count" ? item.dataset_count : item.dataset_count ? Math.round(item.qualityTotal / item.dataset_count) : 0,
     }));
+
+    const qualityBandsTrend = Array.from(qualityBandTrendMap.values())
+      .sort((a, b) => {
+        if (a.sortKey == null && b.sortKey == null) return String(a.bucket).localeCompare(String(b.bucket));
+        if (a.sortKey == null) return 1;
+        if (b.sortKey == null) return -1;
+        return a.sortKey - b.sortKey;
+      })
+      .map((item) => ({
+        bucket: item.bucket,
+        High: item.High,
+        Medium: item.Medium,
+        Low: item.Low,
+        total: item.total,
+      }));
 
     const groups = Array.from(groupMap.values()).map((item) => ({
       ...item,
@@ -926,7 +971,7 @@ export default function Visualizations() {
     }));
     const matrixMax = Math.max(1, ...matrix.flatMap((row) => row.cells.map((cell) => cell.value)));
 
-    return { totalRows, totalDatasets, avgQuality, cleanedCoverage, trend, groups, qualityMix, ranked, scatter, matrix, buckets, matrixMax };
+    return { totalRows, totalDatasets, avgQuality, cleanedCoverage, trend, qualityBandsTrend, groups, qualityMix, ranked, scatter, matrix, buckets, matrixMax };
   }, [filtered, granularity, groupBy, matrixMetric, metric, productOptions, rankMetric, scatterColorBy, sectorOptions]);
 
   if (fileKey || cleanedDataId) {
@@ -1507,15 +1552,20 @@ export default function Visualizations() {
                   <div className="flex h-full items-center justify-center text-sm text-theme-muted">No sector and sales numeric columns found.</div>
                 ) : (
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={globalSectorSales} margin={{ left: 12, right: 12, top: 10, bottom: 6 }}>
+                    <AreaChart data={globalSectorSales} margin={{ left: 12, right: 12, top: 10, bottom: 6 }}>
+                      <defs>
+                        <linearGradient id="sectorWaveFill" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor={C.secondary} stopOpacity={0.35} />
+                          <stop offset="95%" stopColor={C.secondary} stopOpacity={0.04} />
+                        </linearGradient>
+                      </defs>
                       <CartesianGrid stroke="rgba(148,163,184,0.16)" vertical={false} />
                       <XAxis dataKey="name" stroke="var(--text-muted)" tickLine={false} axisLine={false} interval={0} angle={-14} height={70} textAnchor="end" />
                       <YAxis stroke="var(--text-muted)" tickLine={false} axisLine={false} />
                       <Tooltip contentStyle={chartTooltip()} />
-                      <Bar dataKey="value" radius={[12, 12, 0, 0]}>
-                        {globalSectorSales.map((entry) => <Cell key={entry.name} fill={entry.fill} />)}
-                      </Bar>
-                    </BarChart>
+                      <Area type="natural" dataKey="value" stroke={C.secondary} fill="url(#sectorWaveFill)" strokeWidth={2.6} />
+                      <Line type="natural" dataKey="value" stroke={C.deep} strokeWidth={2.2} dot={{ r: 2.5 }} />
+                    </AreaChart>
                   </ResponsiveContainer>
                 )}
               </div>
@@ -1525,12 +1575,20 @@ export default function Visualizations() {
                   <div className="flex h-full items-center justify-center text-sm text-theme-muted">No region/sector distribution to plot.</div>
                 ) : (
                   <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
+                    <AreaChart data={globalRegionDist} margin={{ left: 12, right: 12, top: 10, bottom: 6 }}>
+                      <defs>
+                        <linearGradient id="regionWaveFill" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor={C.tertiary} stopOpacity={0.32} />
+                          <stop offset="95%" stopColor={C.tertiary} stopOpacity={0.04} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid stroke="rgba(148,163,184,0.16)" vertical={false} />
+                      <XAxis dataKey="name" stroke="var(--text-muted)" tickLine={false} axisLine={false} interval={0} angle={-14} height={70} textAnchor="end" />
+                      <YAxis stroke="var(--text-muted)" tickLine={false} axisLine={false} />
                       <Tooltip contentStyle={chartTooltip()} />
-                      <Pie data={globalRegionDist} dataKey="value" nameKey="name" outerRadius={110} innerRadius={58}>
-                        {globalRegionDist.map((entry) => <Cell key={entry.name} fill={entry.fill} />)}
-                      </Pie>
-                    </PieChart>
+                      <Area type="natural" dataKey="value" stroke={C.tertiary} fill="url(#regionWaveFill)" strokeWidth={2.6} />
+                      <Line type="natural" dataKey="value" stroke={C.deep} strokeWidth={2.1} dot={false} />
+                    </AreaChart>
                   </ResponsiveContainer>
                 )}
               </div>
@@ -1610,23 +1668,46 @@ export default function Visualizations() {
           </ResponsiveContainer>
         </Card>
 
-        <Card title="Distribution Studio" subtitle="Toggle the quality distribution between donut and bars." action={<Tabs value={distributionStyle} onChange={setDistributionStyle} options={[{ value: "donut", label: "Donut" }, { value: "bars", label: "Bars" }]} />}>
+        <Card
+          title="Quality Mix Wave"
+          subtitle="PowerBI-style stacked wave showing how dataset quality bands change over time (from real SQLite rows)."
+          action={<Tabs value={distributionStyle} onChange={setDistributionStyle} options={[{ value: "stackedWave", label: "Stacked Wave" }, { value: "lines", label: "Lines" }]} />}
+        >
           <ResponsiveContainer width="100%" height={360}>
-            {distributionStyle === "donut" ? (
-              <PieChart>
-                <Pie data={data.qualityMix} dataKey="value" nameKey="name" innerRadius={74} outerRadius={122} paddingAngle={4}>
-                  {data.qualityMix.map((entry) => <Cell key={entry.name} fill={entry.fill} />)}
-                </Pie>
+            {distributionStyle === "lines" ? (
+              <LineChart data={data.qualityBandsTrend}>
+                <CartesianGrid stroke="rgba(148,163,184,0.16)" vertical={false} />
+                <XAxis dataKey="bucket" stroke="var(--text-muted)" tickLine={false} axisLine={false} />
+                <YAxis stroke="var(--text-muted)" tickLine={false} axisLine={false} />
                 <Tooltip contentStyle={chartTooltip()} />
-              </PieChart>
+                <Line type="natural" dataKey="High" stroke={C.tertiary} strokeWidth={2.8} dot={false} />
+                <Line type="natural" dataKey="Medium" stroke={C.warning} strokeWidth={2.4} dot={false} />
+                <Line type="natural" dataKey="Low" stroke={C.danger} strokeWidth={2.4} dot={false} />
+              </LineChart>
             ) : (
-              <BarChart data={data.qualityMix} layout="vertical" margin={{ left: 12 }}>
-                <CartesianGrid stroke="rgba(148,163,184,0.16)" horizontal={false} />
-                <XAxis type="number" stroke="var(--text-muted)" tickLine={false} axisLine={false} />
-                <YAxis dataKey="name" type="category" stroke="var(--text-muted)" tickLine={false} axisLine={false} />
+              <AreaChart data={data.qualityBandsTrend}>
+                <defs>
+                  <linearGradient id="qHigh" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={C.tertiary} stopOpacity={0.45} />
+                    <stop offset="95%" stopColor={C.tertiary} stopOpacity={0.06} />
+                  </linearGradient>
+                  <linearGradient id="qMed" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={C.warning} stopOpacity={0.36} />
+                    <stop offset="95%" stopColor={C.warning} stopOpacity={0.05} />
+                  </linearGradient>
+                  <linearGradient id="qLow" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={C.danger} stopOpacity={0.32} />
+                    <stop offset="95%" stopColor={C.danger} stopOpacity={0.04} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid stroke="rgba(148,163,184,0.16)" vertical={false} />
+                <XAxis dataKey="bucket" stroke="var(--text-muted)" tickLine={false} axisLine={false} />
+                <YAxis stroke="var(--text-muted)" tickLine={false} axisLine={false} />
                 <Tooltip contentStyle={chartTooltip()} />
-                <Bar dataKey="value" radius={[0, 10, 10, 0]}>{data.qualityMix.map((entry) => <Cell key={entry.name} fill={entry.fill} />)}</Bar>
-              </BarChart>
+                <Area type="natural" dataKey="Low" stackId="1" stroke={C.danger} fill="url(#qLow)" strokeWidth={1.8} />
+                <Area type="natural" dataKey="Medium" stackId="1" stroke={C.warning} fill="url(#qMed)" strokeWidth={1.8} />
+                <Area type="natural" dataKey="High" stackId="1" stroke={C.tertiary} fill="url(#qHigh)" strokeWidth={1.8} />
+              </AreaChart>
             )}
           </ResponsiveContainer>
         </Card>
@@ -1636,22 +1717,32 @@ export default function Visualizations() {
         <Card title="Comparison Builder" subtitle="This chart has its own style mode separate from page filters." action={<Tabs value={compareStyle} onChange={setCompareStyle} options={[{ value: "stacked", label: "Stacked" }, { value: "quality", label: "Quality" }, { value: "mixed", label: "Mixed" }]} />}>
           <ResponsiveContainer width="100%" height={360}>
             {compareStyle === "stacked" ? (
-              <BarChart data={data.groups.slice(0, 8)}>
+              <AreaChart data={data.groups.slice(0, 8)} margin={{ left: 12, right: 12, top: 10, bottom: 18 }}>
+                <defs>
+                  <linearGradient id="cmpClean" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={C.primary} stopOpacity={0.42} />
+                    <stop offset="95%" stopColor={C.primary} stopOpacity={0.05} />
+                  </linearGradient>
+                  <linearGradient id="cmpPend" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={C.warning} stopOpacity={0.38} />
+                    <stop offset="95%" stopColor={C.warning} stopOpacity={0.05} />
+                  </linearGradient>
+                </defs>
                 <CartesianGrid stroke="rgba(148,163,184,0.16)" vertical={false} />
-                <XAxis dataKey="name" stroke="var(--text-muted)" tickLine={false} axisLine={false} />
+                <XAxis dataKey="name" stroke="var(--text-muted)" tickLine={false} axisLine={false} interval={0} angle={-12} height={60} textAnchor="end" />
                 <YAxis stroke="var(--text-muted)" tickLine={false} axisLine={false} />
                 <Tooltip contentStyle={chartTooltip()} />
-                <Bar dataKey="cleanedRows" stackId="a" fill={C.primary} radius={[8, 8, 0, 0]} />
-                <Bar dataKey="pendingRows" stackId="a" fill={C.warning} radius={[8, 8, 0, 0]} />
-              </BarChart>
+                <Area type="natural" dataKey="pendingRows" stackId="1" stroke={C.warning} fill="url(#cmpPend)" strokeWidth={1.8} />
+                <Area type="natural" dataKey="cleanedRows" stackId="1" stroke={C.primary} fill="url(#cmpClean)" strokeWidth={1.8} />
+              </AreaChart>
             ) : compareStyle === "quality" ? (
-              <BarChart data={data.groups.slice(0, 8)} layout="vertical" margin={{ left: 18 }}>
-                <CartesianGrid stroke="rgba(148,163,184,0.16)" horizontal={false} />
-                <XAxis type="number" domain={[0, 100]} stroke="var(--text-muted)" tickLine={false} axisLine={false} />
-                <YAxis dataKey="name" width={120} type="category" stroke="var(--text-muted)" tickLine={false} axisLine={false} />
+              <LineChart data={data.groups.slice(0, 8)} margin={{ left: 12, right: 12, top: 10, bottom: 18 }}>
+                <CartesianGrid stroke="rgba(148,163,184,0.16)" vertical={false} />
+                <XAxis dataKey="name" stroke="var(--text-muted)" tickLine={false} axisLine={false} interval={0} angle={-12} height={60} textAnchor="end" />
+                <YAxis domain={[0, 100]} stroke="var(--text-muted)" tickLine={false} axisLine={false} />
                 <Tooltip contentStyle={chartTooltip()} />
-                <Bar dataKey="quality" fill={C.secondary} radius={[0, 10, 10, 0]} />
-              </BarChart>
+                <Line type="natural" dataKey="quality" stroke={C.secondary} strokeWidth={3} dot={{ r: 3 }} />
+              </LineChart>
             ) : (
               <ComposedChart data={data.groups.slice(0, 8)}>
                 <CartesianGrid stroke="rgba(148,163,184,0.16)" vertical={false} />
@@ -1659,8 +1750,8 @@ export default function Visualizations() {
                 <YAxis yAxisId="left" stroke="var(--text-muted)" tickLine={false} axisLine={false} />
                 <YAxis yAxisId="right" orientation="right" domain={[0, 100]} stroke="var(--text-muted)" tickLine={false} axisLine={false} />
                 <Tooltip contentStyle={chartTooltip()} />
-                <Bar yAxisId="left" dataKey="row_count" fill={C.primary} radius={[8, 8, 0, 0]} />
-                <Line yAxisId="right" type="monotone" dataKey="quality" stroke={C.secondary} strokeWidth={2.4} />
+                <Area yAxisId="left" type="natural" dataKey="row_count" stroke={C.primary} fill="rgba(20,184,166,0.18)" strokeWidth={2.2} />
+                <Line yAxisId="right" type="natural" dataKey="quality" stroke={C.secondary} strokeWidth={2.4} dot={false} />
               </ComposedChart>
             )}
           </ResponsiveContainer>

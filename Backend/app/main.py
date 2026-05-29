@@ -13,7 +13,6 @@ from app.database import engine
 from app.models import Base
 from app.routers import dashboard, auth
 from app.routers import upload, analysis, ai, reports
-from app.routers import role_router
 
 Base.metadata.create_all(bind=engine)
 app = FastAPI(title="SDAS - Smart Data Analytics System")
@@ -46,7 +45,6 @@ app.include_router(reports.router, prefix="/api/reports")
 app.include_router(upload.router, prefix="/api/upload")
 app.include_router(analysis.router, prefix="/api/analysis")
 app.include_router(ai.router, prefix="/api/ai")
-app.include_router(role_router.router, prefix="/api")
 app.include_router(dashboard.router, prefix="/api/dashboard")
 
 @app.get("/")

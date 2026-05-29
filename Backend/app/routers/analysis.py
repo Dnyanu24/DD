@@ -2,7 +2,6 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, R
 from fastapi.responses import StreamingResponse, Response
 from sqlalchemy.orm import Session
 from typing import Dict, Any, Optional, Callable, List
-from pydantic import BaseModel
 import pandas as pd
 import numpy as np
 import json
@@ -13,27 +12,21 @@ from datetime import datetime
 import re
 
 from app.database import SessionLocal
-from app.models import RawData, CleanedData, AIPrediction, AIRecommendation, DataQualityScore, Sector, Product, FeedbackLog, SavedCleanedDataset, PipelineIterationLog
+from app.models import RawData, CleanedData, AIPrediction, AIRecommendation, DataQualityScore, Sector, Product
 from app.services.data_cleaning import DataCleaningEngine
 from app.services.ai_predictions import AIPredictionEngine
 from app.services.feedback_learning import FeedbackLearningEngine
-from app.services.file_ingest import load_dataframe_from_uploadfile
-from app.services.pipeline_controller import run_intelligent_pipeline
-from app.services.sector_classifier import SectorClassifier
-from app.services.root_cause_analyzer import RootCauseAnalyzer
-from app.services.meta_learner import MetaLearner
+from app.services.file_ingest import (
+    build_ingest_report,
+    load_dataframe_from_uploadfile,
+    repair_dataframe_semantics,
+)
+from app.services.data_profiler import profile_dataframe
 from app.dependencies import get_current_user, require_sector_head
 from app.models import User
 
 
 router = APIRouter()
-
-
-class SaveCleanedDatasetRequest(BaseModel):
-    source_cleaned_data_id: Optional[int] = None
-    filename: Optional[str] = None
-    columns: Optional[List[str]] = None
-    rows: List[Dict[str, Any]]
 
 def get_db():
     db = SessionLocal()
@@ -209,49 +202,6 @@ def _compute_cleaning_improvement(before_df: pd.DataFrame, after_df: pd.DataFram
     }
 
 
-def _calculate_missing_percent(df: pd.DataFrame) -> float:
-    total_cells = max(len(df) * max(len(df.columns), 1), 1)
-    if len(df.columns) == 0:
-        return 0.0
-    missing_cells = int(df.isna().sum().sum())
-    return round((missing_cells / total_cells) * 100, 2)
-
-
-def _build_predictive_fill_audit(predictive_fill: bool, missing_percent: float) -> Optional[Dict[str, Any]]:
-    if not predictive_fill or missing_percent < 60:
-        return None
-    return {
-        "level": "high_risk_override",
-        "message": f"Predictive fill override approved on sparse dataset ({missing_percent}% blank cells).",
-        "missing_percent": missing_percent,
-    }
-
-
-def _persist_predictive_fill_audit(
-    db: Session,
-    current_user: User,
-    data_id: int,
-    algorithm: str,
-    audit_warning: Optional[Dict[str, Any]],
-):
-    if not audit_warning:
-        return
-
-    db.add(
-        FeedbackLog(
-            user_id=current_user.id,
-            data_id=data_id,
-            feedback_type="audit",
-            feedback_data={
-                "category": "predictive_fill_override",
-                "algorithm": algorithm,
-                **audit_warning,
-            },
-        )
-    )
-    db.commit()
-
-
 def _allowed_sector_ids(db: Session, current_user: User) -> List[int]:
     query = db.query(Sector.id).filter(Sector.company_id == current_user.company_id)
     if current_user.role == "sector_head":
@@ -260,9 +210,12 @@ def _allowed_sector_ids(db: Session, current_user: User) -> List[int]:
 
 
 def _allowed_uploader_ids(db: Session, current_user: User) -> List[int]:
-    # Allow access to datasets uploaded by any user in the same company.
-    # Sector scoping is still enforced via `_allowed_sector_ids` and raw_data.sector_id filters.
-    return [row[0] for row in db.query(User.id).filter(User.company_id == current_user.company_id).all()]
+    return [
+        row[0] for row in db.query(User.id).filter(
+            User.company_id == current_user.company_id,
+            User.role == current_user.role
+        ).all()
+    ]
 
 
 def _get_accessible_raw_data(db: Session, data_id: int, current_user: User) -> Optional[RawData]:
@@ -281,11 +234,11 @@ def _get_accessible_raw_data(db: Session, data_id: int, current_user: User) -> O
 
 def _load_dataframe_from_upload(file: UploadFile) -> pd.DataFrame:
     try:
-        return load_dataframe_from_uploadfile(file)
+        return repair_dataframe_semantics(load_dataframe_from_uploadfile(file))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    except Exception:
-        raise HTTPException(status_code=400, detail="Unsupported file format")
 
 def _derive_learning_strategy(db: Session, df: pd.DataFrame, predictive_fill: bool = False) -> Dict[str, Any]:
     learning_engine = FeedbackLearningEngine()
@@ -334,12 +287,11 @@ def _derive_learning_strategy(db: Session, df: pd.DataFrame, predictive_fill: bo
         high_quality_rate=high_quality_rate,
     )
     config = active_online.get("config", config)
-
     if predictive_fill:
         config["impute_strategy"] = "ml"
 
-    # IMPORTANT: Cleaning output should preserve original units by default.
-    # Scaling/smoothing is for modeling, not for "cleaned dataset" export/visualization.
+    # Cleaned datasets are exported and visualized, so preserve original units.
+    # Scaling/noise smoothing belongs in modeling, not in user-facing cleaned CSVs.
     config["normalize"] = False
     config["standardize"] = False
     config["reduce_noise"] = False
@@ -397,17 +349,14 @@ def _get_algorithm_steps(engine: DataCleaningEngine, algorithm: str, config: Dic
         "full_pipeline": [
             {"id": "clustering_profile", "label": "Clustering feature groups", "stage": "ml", "technique": "k-means feature grouping for structure detection", "operation": lambda df: df},
             {"id": "remove_duplicates", "label": "Removing duplicate rows", "stage": "cleaning", "technique": "exact/fuzzy dedup", "operation": engine.remove_duplicates},
-            # IMPORTANT: Keep raw numeric units and enable "self-learning" imputation selection downstream.
-            # We defer missing-value imputation to `run_intelligent_pipeline`, which can evaluate multiple
-            # imputers per column (mean/median/KNN/regression) and pick the best via validation.
-            {"id": "missing_values", "label": "Deferring missing value imputation to self-learning pipeline", "stage": "ml", "technique": "parallel imputation selection", "operation": lambda df: df},
+            {"id": "data_types", "label": "Safely correcting data types", "stage": "cleaning", "technique": "conservative schema correction", "operation": engine.correct_data_types},
+            {"id": "missing_values", "label": "Imputing missing values", "stage": "ml", "technique": f"{impute_strategy} imputation", "operation": lambda df: engine.impute_missing_values(df, impute_strategy)},
+            {"id": "domain_validation_after_impute", "label": "Validating domain ranges", "stage": "validation", "technique": "range constraints for scores and counts", "operation": engine.enforce_domain_constraints},
             {"id": "outliers", "label": "Detecting outliers", "stage": "ml", "technique": f"{outlier_method} outlier filtering", "operation": lambda df: engine.detect_outliers(df, outlier_method)},
-            {"id": "data_types", "label": "Correcting data types", "stage": "cleaning", "technique": "schema correction", "operation": engine.correct_data_types},
-            # IMPORTANT: For "cleaned dataset" exports/visualizations we preserve original units.
-            # Scaling/smoothing can be done separately for modeling, but should not alter cleaned CSV values.
-            {"id": "normalize", "label": "Preserving numeric units (normalization skipped)", "stage": "ml", "technique": "no-op", "operation": lambda df: df},
-            {"id": "standardize", "label": "Preserving numeric units (standardization skipped)", "stage": "ml", "technique": "no-op", "operation": lambda df: df},
-            {"id": "noise_reduction", "label": "Preserving numeric units (noise reduction skipped)", "stage": "ml", "technique": "no-op", "operation": lambda df: df},
+            {"id": "domain_validation_after_outliers", "label": "Revalidating domain ranges", "stage": "validation", "technique": "post-outlier range constraints", "operation": engine.enforce_domain_constraints},
+            {"id": "normalize", "label": "Normalizing numeric columns", "stage": "ml", "technique": "scaler transforms", "operation": engine.normalize_data if config.get("normalize", False) else (lambda df: df)},
+            {"id": "standardize", "label": "Standardizing numeric columns", "stage": "ml", "technique": "z-score standardization", "operation": engine.standardize_data if config.get("standardize", False) else (lambda df: df)},
+            {"id": "noise_reduction", "label": "Reducing signal noise", "stage": "ml", "technique": "rolling window smoothing", "operation": engine.reduce_noise if config.get("reduce_noise", False) else (lambda df: df)},
             {"id": "text_cleaning", "label": "Cleaning text fields", "stage": "nlp", "technique": "text normalization", "operation": engine.clean_text if config.get("clean_text", False) else (lambda df: df)},
         ],
     }
@@ -590,7 +539,7 @@ async def analyze_data(
         raise HTTPException(status_code=404, detail="Data not found")
 
     # Convert stored JSON back to DataFrame
-    df = pd.DataFrame(raw_data.data)
+    df = repair_dataframe_semantics(pd.DataFrame(raw_data.data))
 
     results = {}
 
@@ -700,6 +649,8 @@ async def error_profile(
 ):
     """Analyze dataset quality issues for visualization."""
     df = _load_dataframe_from_upload(file)
+    schema_profile = profile_dataframe(df)
+    extraction = build_ingest_report(df, file.filename, file.content_type)
     total_rows = int(len(df))
     total_columns = int(len(df.columns))
     total_cells = int(total_rows * total_columns) if total_rows and total_columns else 0
@@ -750,6 +701,8 @@ async def error_profile(
 
     return {
         "filename": file.filename,
+        "file_type": extraction["file_type"],
+        "extraction": extraction,
         "summary": {
             "rows": total_rows,
             "columns": total_columns,
@@ -758,6 +711,8 @@ async def error_profile(
         },
         "issues": issue_breakdown,
         "column_missing": column_missing,
+        "schema_profile": schema_profile,
+        "ingest_warnings": extraction["warnings"],
         "message": "Error profile generated",
     }
 
@@ -775,11 +730,8 @@ async def clean_data(
         raise HTTPException(status_code=404, detail="Data not found")
 
     cleaning_engine = DataCleaningEngine()
-    source_df = pd.DataFrame(raw_data.data)
-    missing_percent = _calculate_missing_percent(source_df)
-    audit_warning = _build_predictive_fill_audit(predictive_fill, missing_percent)
-    if audit_warning:
-        cleaning_engine.log_action("predictive_fill_override", audit_warning)
+    source_df = repair_dataframe_semantics(pd.DataFrame(raw_data.data))
+    before_profile = profile_dataframe(source_df)
     learning = _derive_learning_strategy(db, source_df, predictive_fill)
     strategy_config = learning["config"]
     steps = _get_algorithm_steps(cleaning_engine, algorithm, strategy_config)
@@ -791,21 +743,7 @@ async def clean_data(
         for step in steps:
             df_clean = step["operation"](df_clean)
         structured_df = _structure_dataframe(df_clean)
-
-        # Intelligent unstructured -> structured conversion + validation layer.
-        intelligent = run_intelligent_pipeline(
-            structured_df,
-            db=db,
-            company_id=current_user.company_id,
-            sector_id=raw_data.sector_id,
-            role=current_user.role,
-            config=strategy_config,
-        )
-        structured_df = intelligent.df
-
-        # Auto sector classification (adds `sector`, `sector_confidence`, `sector_source`).
-        classifier = SectorClassifier(db, company_id=current_user.company_id)
-        structured_df, sector_report = classifier.classify(structured_df)
+        after_profile = profile_dataframe(structured_df)
         improvement = _compute_cleaning_improvement(source_df, structured_df)
 
         persist_result = _persist_cleaned_variants(
@@ -815,110 +753,21 @@ async def clean_data(
             structured_df=structured_df,
             quality_scores=cleaning_engine.get_quality_scores(),
         )
-        _persist_predictive_fill_audit(db, current_user, data_id, algorithm, audit_warning)
-
-        # Self-learning: store what worked for this dataset so future clean runs can warm-start.
-        # This captures the selected imputation methods (parallel imputation) and basic quality metrics.
-        try:
-            best_methods = {}
-            for item in intelligent.logs:
-                if isinstance(item, dict) and item.get("stage") == "parallel_imputation":
-                    best_methods = dict(item.get("best_method_by_column") or {})
-                    break
-
-            best_config = dict(intelligent.config_used or {})
-            if best_methods:
-                best_config["best_method_by_column"] = best_methods
-
-            validation_stats = {}
-            validation_warnings = []
-            for item in intelligent.logs:
-                if isinstance(item, dict) and item.get("stage") == "validation":
-                    validation_stats = dict(item.get("stats") or {})
-                    validation_warnings = list(item.get("warnings") or [])
-                    break
-
-            best_metrics = {
-                "cleaned_percent": improvement.get("cleaned_percent"),
-                "missing_after_percent": improvement.get("missing_after_percent"),
-                "validation_stats": validation_stats,
-                "warnings_count": len(intelligent.warnings or []) + len(validation_warnings),
-            }
-
-            MetaLearner(db).record_experience(
-                company_id=current_user.company_id,
-                sector_id=raw_data.sector_id,
-                df=source_df,
-                best_config=best_config,
-                best_model={"model_type": "data_cleaning", "params": {}},
-                best_metrics=best_metrics,
-                source_cleaned_data_id=int(persist_result.get("primary_cleaned_data_id") or 0) or None,
-            )
-        except Exception:
-            pass
-
-        # Iteration logs (SQLite) for visibility and future optimization.
-        try:
-            analyzer = RootCauseAnalyzer()
-            rc = analyzer.analyze(
-                source_df,
-                structured_df,
-                metrics={"cleaned_percent": improvement.get("cleaned_percent"), "missing_after_percent": improvement.get("missing_after_percent")},
-                previous_metrics=None,
-                cleaning_config=strategy_config,
-            )
-            run_key = f"data_cleaning:{current_user.company_id}:{raw_data.sector_id or 'all'}:{data_id}:{datetime.utcnow().strftime('%Y%m%dT%H%M%S')}"
-            entry = PipelineIterationLog(
-                company_id=int(current_user.company_id),
-                sector_id=int(raw_data.sector_id) if raw_data.sector_id is not None else None,
-                task="data_cleaning",
-                run_key=run_key,
-                iteration=0,
-                status="completed",
-                metrics={
-                    "cleaned_percent": improvement.get("cleaned_percent"),
-                    "missing_before_percent": improvement.get("missing_before_percent"),
-                    "missing_after_percent": improvement.get("missing_after_percent"),
-                    "duplicates_before": improvement.get("duplicates_before"),
-                    "duplicates_after": improvement.get("duplicates_after"),
-                    "quality_score": persist_result.get("quality_score"),
-                },
-                previous_metrics=None,
-                dataset_stats=rc.dataset_stats,
-                cleaning_config=dict(best_config if "best_config" in locals() else strategy_config),
-                root_cause={
-                    "root_causes": rc.root_causes,
-                    "recommended_config_updates": rc.recommended_config_updates,
-                },
-                notes="Auto-logged cleaning run (self-learning enabled via parallel imputation selection).",
-                created_at=datetime.utcnow(),
-            )
-            db.add(entry)
-            db.commit()
-        except Exception:
-            db.rollback()
 
         return {
             "message": "Data cleaning completed",
             "data_id": data_id,
             "algorithm": algorithm,
             "predictive_fill": predictive_fill,
-            "audit_warning": audit_warning,
             "row_count": len(structured_df),
             "column_count": len(structured_df.columns),
             "adaptive_config": strategy_config,
-            "schema": intelligent.schema,
-            "pipeline_summary": intelligent.summary,
-            "pipeline_warnings": intelligent.warnings,
-            "sector_classification": {
-                "sector_counts": sector_report.sector_counts,
-                "uncertain_rows": sector_report.uncertain_rows,
-                "used_model": sector_report.used_model,
-            },
             "learning_feedback": learning["history"],
             "cleaning_summary": improvement,
+            "schema_profile_before": before_profile,
+            "schema_profile_after": after_profile,
             "quality_scores": cleaning_engine.get_quality_scores(),
-            "logs": cleaning_engine.get_logs() + intelligent.logs,
+            "logs": cleaning_engine.get_logs(),
             **persist_result,
         }
     except Exception as e:
@@ -940,11 +789,8 @@ async def clean_data_stream(
         raise HTTPException(status_code=404, detail="Data not found")
 
     cleaning_engine = DataCleaningEngine()
-    source_df = pd.DataFrame(raw_data.data)
-    missing_percent = _calculate_missing_percent(source_df)
-    audit_warning = _build_predictive_fill_audit(predictive_fill, missing_percent)
-    if audit_warning:
-        cleaning_engine.log_action("predictive_fill_override", audit_warning)
+    source_df = repair_dataframe_semantics(pd.DataFrame(raw_data.data))
+    before_profile = profile_dataframe(source_df)
     learning = _derive_learning_strategy(db, source_df, predictive_fill)
     strategy_config = learning["config"]
     steps = _get_algorithm_steps(cleaning_engine, algorithm, strategy_config)
@@ -958,7 +804,6 @@ async def clean_data_stream(
                 "data_id": data_id,
                 "algorithm": algorithm,
                 "predictive_fill": predictive_fill,
-                "audit_warning": audit_warning,
                 "total_steps": len(steps),
                 "adaptive_config": strategy_config,
                 "learning_feedback": learning["history"],
@@ -1005,6 +850,7 @@ async def clean_data_stream(
                 "timestamp": _utc_iso(),
             })
             structured_df = _structure_dataframe(df_clean)
+            after_profile = profile_dataframe(structured_df)
 
             improvement = _compute_cleaning_improvement(source_df, structured_df)
 
@@ -1015,7 +861,6 @@ async def clean_data_stream(
                 structured_df=structured_df,
                 quality_scores=cleaning_engine.get_quality_scores(),
             )
-            _persist_predictive_fill_audit(db, current_user, data_id, algorithm, audit_warning)
             yield _sse_event("step", {
                 "step_id": "structuring",
                 "label": "Converting unstructured data to structured schema",
@@ -1031,7 +876,6 @@ async def clean_data_stream(
                 "data_id": data_id,
                 "algorithm": algorithm,
                 "predictive_fill": predictive_fill,
-                "audit_warning": audit_warning,
                 "row_count": len(structured_df),
                 "column_count": len(structured_df.columns),
                 "quality_scores": cleaning_engine.get_quality_scores(),
@@ -1039,6 +883,8 @@ async def clean_data_stream(
                 "adaptive_config": strategy_config,
                 "learning_feedback": learning["history"],
                 "cleaning_summary": improvement,
+                "schema_profile_before": before_profile,
+                "schema_profile_after": after_profile,
                 "timestamp": _utc_iso(),
                 **persist_result,
             })
@@ -1105,134 +951,6 @@ async def get_cleaned_datasets(
         )
 
     return {"data": data, "total_count": len(data)}
-
-
-@router.get("/visualization-data")
-async def get_visualization_data(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Return database-backed visualization rows using cleaned data when available."""
-    sector_ids = _allowed_sector_ids(db, current_user)
-    uploader_ids = _allowed_uploader_ids(db, current_user)
-    if not sector_ids or not uploader_ids:
-        return {
-            "data": [],
-            "total_count": 0,
-            "meta": {
-                "source": "database",
-                "cleaned_count": 0,
-                "pending_count": 0,
-            },
-        }
-
-    raw_rows = db.query(RawData)\
-        .filter(
-            RawData.sector_id.in_(sector_ids),
-            RawData.uploaded_by.in_(uploader_ids),
-        )\
-        .order_by(RawData.uploaded_at.desc())\
-        .all()
-
-    cleaned_rows = db.query(CleanedData)\
-        .join(RawData, CleanedData.raw_data_id == RawData.id)\
-        .filter(
-            RawData.sector_id.in_(sector_ids),
-            RawData.uploaded_by.in_(uploader_ids),
-            ~CleanedData.cleaning_algorithm.contains("__sector__"),
-        )\
-        .order_by(CleanedData.cleaned_at.desc())\
-        .all()
-
-    cleaned_by_raw_id = {row.raw_data_id: row for row in cleaned_rows}
-    sector_map = {
-        row.id: row.name
-        for row in db.query(Sector).filter(Sector.id.in_(sector_ids)).all()
-    }
-
-    product_ids = sorted({row.product_id for row in raw_rows if row.product_id is not None})
-    product_map = {}
-    if product_ids:
-        product_map = {
-            row.id: row.name
-            for row in db.query(Product).filter(Product.id.in_(product_ids)).all()
-        }
-
-    data = []
-    cleaned_count = 0
-    pending_count = 0
-
-    for raw in raw_rows:
-        sector_name = sector_map.get(raw.sector_id, "Unknown")
-        product_name = product_map.get(raw.product_id, "Unassigned") if raw.product_id else "Unassigned"
-        cleaned = cleaned_by_raw_id.get(raw.id)
-
-        if cleaned:
-            records = cleaned.cleaned_data if isinstance(cleaned.cleaned_data, list) else []
-            data.append({
-                "id": cleaned.id,
-                "raw_data_id": raw.id,
-                "sector_id": raw.sector_id,
-                "sector_name": sector_name,
-                "product_id": raw.product_id,
-                "product_name": product_name,
-                "row_count": len(records),
-                "column_count": len(records[0].keys()) if records and isinstance(records[0], dict) else 0,
-                "quality_score": round(float(cleaned.quality_score or 0), 4),
-                "has_cleaned_data": True,
-                "status": "Cleaned",
-                "cleaning_algorithm": cleaned.cleaning_algorithm,
-                "uploaded_at": raw.uploaded_at.isoformat() if raw.uploaded_at else None,
-                "cleaned_at": cleaned.cleaned_at.isoformat() if cleaned.cleaned_at else None,
-                "time_reference": cleaned.cleaned_at.isoformat() if cleaned.cleaned_at else (raw.uploaded_at.isoformat() if raw.uploaded_at else None),
-                "source": "cleaned_data",
-            })
-            cleaned_count += 1
-            continue
-
-        records = raw.data if isinstance(raw.data, list) else []
-        estimated_quality = 0.0
-        if records:
-            total_cells = max(len(records) * max(len(records[0].keys()) if isinstance(records[0], dict) else 0, 1), 1)
-            missing_cells = 0
-            if records and isinstance(records[0], dict):
-                missing_cells = sum(
-                    1
-                    for row in records
-                    for value in row.values()
-                    if value in [None, ""]
-                )
-            estimated_quality = round(max(0.0, 1 - (missing_cells / total_cells)), 4)
-
-        data.append({
-            "id": raw.id,
-            "raw_data_id": raw.id,
-            "sector_id": raw.sector_id,
-            "sector_name": sector_name,
-            "product_id": raw.product_id,
-            "product_name": product_name,
-            "row_count": len(records),
-            "column_count": len(records[0].keys()) if records and isinstance(records[0], dict) else 0,
-            "quality_score": estimated_quality,
-            "has_cleaned_data": False,
-            "status": "Pending",
-            "cleaning_algorithm": None,
-            "uploaded_at": raw.uploaded_at.isoformat() if raw.uploaded_at else None,
-            "cleaned_at": None,
-            "time_reference": raw.uploaded_at.isoformat() if raw.uploaded_at else None,
-            "source": "raw_data",
-        })
-        pending_count += 1
-
-    return {
-        "data": data,
-        "total_count": len(data),
-        "meta": {
-            "source": "database",
-            "cleaned_count": cleaned_count,
-            "pending_count": pending_count,
-        },
-    }
 
 
 @router.get("/cleaned-datasets/{cleaned_data_id}/download")
@@ -1355,14 +1073,143 @@ async def delete_cleaned_history(
     if not rows:
         return {"message": "No cleaned history to delete", "deleted_count": 0}
 
-    deleted_count = 0
-    for cleaned in rows:
-        db.query(DataQualityScore).filter(DataQualityScore.cleaned_data_id == cleaned.id).delete()
-        db.delete(cleaned)
-        deleted_count += 1
+    try:
+        cleaned_ids = [row.id for row in rows]
+        db.query(DataQualityScore)\
+            .filter(DataQualityScore.cleaned_data_id.in_(cleaned_ids))\
+            .delete(synchronize_session=False)
+        db.query(CleanedData)\
+            .filter(CleanedData.id.in_(cleaned_ids))\
+            .delete(synchronize_session=False)
+        db.commit()
+        return {"message": "Cleaned history deleted", "deleted_count": len(cleaned_ids)}
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete cleaned history: {str(exc)}")
 
-    db.commit()
-    return {"message": "Cleaned history deleted", "deleted_count": deleted_count}
+
+@router.get("/visualization-data")
+async def get_visualization_data(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Return database-backed rows for the Visualizations page."""
+    sector_ids = _allowed_sector_ids(db, current_user)
+    uploader_ids = _allowed_uploader_ids(db, current_user)
+    if not sector_ids or not uploader_ids:
+        return {
+            "data": [],
+            "total_count": 0,
+            "meta": {"source": "database", "cleaned_count": 0, "pending_count": 0},
+        }
+
+    raw_rows = db.query(RawData)\
+        .filter(
+            RawData.sector_id.in_(sector_ids),
+            RawData.uploaded_by.in_(uploader_ids),
+        )\
+        .order_by(RawData.uploaded_at.desc())\
+        .all()
+
+    cleaned_rows = db.query(CleanedData)\
+        .join(RawData, CleanedData.raw_data_id == RawData.id)\
+        .filter(
+            RawData.sector_id.in_(sector_ids),
+            RawData.uploaded_by.in_(uploader_ids),
+            ~CleanedData.cleaning_algorithm.contains("__sector__"),
+        )\
+        .order_by(CleanedData.cleaned_at.desc())\
+        .all()
+
+    cleaned_by_raw_id = {row.raw_data_id: row for row in cleaned_rows}
+    sector_map = {
+        row.id: row.name
+        for row in db.query(Sector).filter(Sector.id.in_(sector_ids)).all()
+    }
+    product_ids = sorted({row.product_id for row in raw_rows if row.product_id is not None})
+    product_map = {}
+    if product_ids:
+        product_map = {
+            row.id: row.name
+            for row in db.query(Product).filter(Product.id.in_(product_ids)).all()
+        }
+
+    data = []
+    cleaned_count = 0
+    pending_count = 0
+
+    for raw in raw_rows:
+        records = raw.data if isinstance(raw.data, list) else []
+        row_count = len(records)
+        column_count = len(records[0].keys()) if records and isinstance(records[0], dict) else 0
+        sector_name = sector_map.get(raw.sector_id, "Unknown")
+        product_name = product_map.get(raw.product_id, "Unassigned") if raw.product_id else "Unassigned"
+        cleaned = cleaned_by_raw_id.get(raw.id)
+
+        if cleaned:
+            cleaned_records = cleaned.cleaned_data if isinstance(cleaned.cleaned_data, list) else []
+            data.append({
+                "id": cleaned.id,
+                "raw_data_id": raw.id,
+                "sector_id": raw.sector_id,
+                "sector_name": sector_name,
+                "product_id": raw.product_id,
+                "product_name": product_name,
+                "row_count": len(cleaned_records),
+                "column_count": len(cleaned_records[0].keys()) if cleaned_records and isinstance(cleaned_records[0], dict) else column_count,
+                "quality_score": round(float(cleaned.quality_score or 0), 4),
+                "has_cleaned_data": True,
+                "status": "Cleaned",
+                "cleaning_algorithm": cleaned.cleaning_algorithm,
+                "uploaded_at": raw.uploaded_at.isoformat() if raw.uploaded_at else None,
+                "cleaned_at": cleaned.cleaned_at.isoformat() if cleaned.cleaned_at else None,
+                "time_reference": cleaned.cleaned_at.isoformat() if cleaned.cleaned_at else (raw.uploaded_at.isoformat() if raw.uploaded_at else None),
+                "source": "cleaned_data",
+            })
+            cleaned_count += 1
+            continue
+
+        missing_cells = 0
+        if records and isinstance(records[0], dict):
+            missing_cells = sum(
+                1
+                for row in records
+                if isinstance(row, dict)
+                for value in row.values()
+                if value in [None, ""]
+            )
+        total_cells = max(row_count * max(column_count, 1), 1)
+        estimated_quality = round(max(0.0, 1 - (missing_cells / total_cells)), 4) if row_count else 0.0
+
+        data.append({
+            "id": raw.id,
+            "raw_data_id": raw.id,
+            "sector_id": raw.sector_id,
+            "sector_name": sector_name,
+            "product_id": raw.product_id,
+            "product_name": product_name,
+            "row_count": row_count,
+            "column_count": column_count,
+            "quality_score": estimated_quality,
+            "has_cleaned_data": False,
+            "status": "Pending",
+            "cleaning_algorithm": None,
+            "uploaded_at": raw.uploaded_at.isoformat() if raw.uploaded_at else None,
+            "cleaned_at": None,
+            "time_reference": raw.uploaded_at.isoformat() if raw.uploaded_at else None,
+            "source": "raw_data",
+        })
+        pending_count += 1
+
+    return {
+        "data": data,
+        "total_count": len(data),
+        "meta": {
+            "source": "database",
+            "cleaned_count": cleaned_count,
+            "pending_count": pending_count,
+        },
+    }
 
 
 @router.get("/cleaned-datasets/{cleaned_data_id}")
@@ -1397,7 +1244,7 @@ async def get_cleaned_dataset_preview(
     cleaned, raw = row
     records = cleaned.cleaned_data if isinstance(cleaned.cleaned_data, list) else []
     preview = records[offset:offset + limit]
-    columns = list(preview[0].keys()) if preview and isinstance(preview[0], dict) else []
+    columns = list(records[0].keys()) if records and isinstance(records[0], dict) else []
     algo = cleaned.cleaning_algorithm or "unknown"
     sector_label = "all"
     if "__sector__" in algo:
@@ -1406,6 +1253,7 @@ async def get_cleaned_dataset_preview(
     return {
         "cleaned_data_id": cleaned.id,
         "raw_data_id": raw.id,
+        "filename": f"cleaned_raw_{raw.id}_{cleaned.id}",
         "algorithm": algo,
         "sector_label": sector_label,
         "quality_score": cleaned.quality_score,
@@ -1417,46 +1265,6 @@ async def get_cleaned_dataset_preview(
         "preview_limit": limit,
         "preview_row_count": len(preview),
         "rows": preview,
-    }
-
-
-@router.post("/saved-cleaned-datasets")
-async def save_cleaned_dataset(
-    payload: SaveCleanedDatasetRequest,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Persist a cleaned dataset preview (from downloaded file) into the database."""
-    rows = payload.rows if isinstance(payload.rows, list) else []
-    if not rows:
-        raise HTTPException(status_code=400, detail="No rows provided")
-    if len(rows) > 5000:
-        rows = rows[:5000]
-
-    inferred_columns: List[str] = []
-    if payload.columns and isinstance(payload.columns, list):
-        inferred_columns = [str(col) for col in payload.columns][:250]
-    elif rows and isinstance(rows[0], dict):
-        inferred_columns = [str(col) for col in rows[0].keys()][:250]
-
-    saved = SavedCleanedDataset(
-        company_id=current_user.company_id,
-        created_by=current_user.id,
-        source_cleaned_data_id=payload.source_cleaned_data_id,
-        filename=(payload.filename or None),
-        columns=inferred_columns,
-        row_count=len(rows),
-        data=rows,
-    )
-    db.add(saved)
-    db.commit()
-    db.refresh(saved)
-
-    return {
-        "message": "Saved cleaned dataset",
-        "saved_id": saved.id,
-        "row_count": saved.row_count,
-        "column_count": len(inferred_columns),
     }
 
 
@@ -1478,7 +1286,7 @@ async def get_cleaning_comparison(
     if not cleaned_row:
         raise HTTPException(status_code=404, detail="Cleaned dataset not found")
 
-    before_df = pd.DataFrame(raw_data.data if isinstance(raw_data.data, list) else [])
+    before_df = repair_dataframe_semantics(pd.DataFrame(raw_data.data if isinstance(raw_data.data, list) else []))
     after_df = pd.DataFrame(cleaned_row.cleaned_data if isinstance(cleaned_row.cleaned_data, list) else [])
 
     def _missing_pct(df: pd.DataFrame) -> float:

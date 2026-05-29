@@ -22,7 +22,6 @@ export default function ChatWidget() {
       role: "assistant",
       text: "Hi, I can help with upload, cleaning, visualizations, and reports.",
       suggestions: STARTER_PROMPTS,
-      sources: [],
     },
   ]);
 
@@ -31,7 +30,7 @@ export default function ChatWidget() {
     return location.pathname.replace("/", "") || "app";
   }, [location.pathname]);
 
-  const pushMessage = (role, messageText, suggestions = [], sources = []) => {
+  const pushMessage = (role, messageText, suggestions = []) => {
     setMessages((prev) => [
       ...prev,
       {
@@ -39,7 +38,6 @@ export default function ChatWidget() {
         role,
         text: messageText,
         suggestions,
-        sources: Array.isArray(sources) ? sources : [],
       },
     ]);
   };
@@ -58,7 +56,7 @@ export default function ChatWidget() {
         page: currentPage,
         dataset_id: datasetId ? Number(datasetId) : null,
       });
-      pushMessage("assistant", response.reply, response.suggestions || [], response.sources || []);
+      pushMessage("assistant", response.reply, response.suggestions || []);
     } catch (error) {
       pushMessage("assistant", error.message || "Chat request failed. Please try again.");
     } finally {
@@ -128,18 +126,6 @@ export default function ChatWidget() {
                     ))}
                   </div>
                 )}
-
-                {message.role === "assistant" && Array.isArray(message.sources) && message.sources.length > 0 ? (
-                  <div className="mt-2 space-y-1 text-left">
-                    <p className="text-[11px] font-semibold text-green-800 dark:text-green-300">Sources</p>
-                    {message.sources.slice(0, 3).map((src) => (
-                      <div key={`${message.id}_${src.id || src.title}`} className="rounded-md border border-green-200 bg-white px-2 py-1 text-[11px] text-slate-700 dark:border-green-800 dark:bg-slate-900 dark:text-slate-200">
-                        <span className="font-semibold">{src.title || src.source}</span>
-                        {src.snippet ? <span className="ml-1 opacity-80">- {src.snippet}</span> : null}
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
               </div>
             ))}
           </div>

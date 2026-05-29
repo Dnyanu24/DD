@@ -36,7 +36,7 @@ export default function DataUpload() {
       setIsLoading(true);
       try {
         const [sectorRows, uploaded] = await Promise.all([
-          getSectors().catch(() => []),
+          getSectors(),
           getUploadedData().catch(() => ({ data: [] })),
         ]);
         if (!mounted) return;
@@ -44,7 +44,15 @@ export default function DataUpload() {
         setUploadedHistory(Array.isArray(uploaded?.data) ? uploaded.data : []);
         if (Array.isArray(sectorRows) && sectorRows.length > 0) {
           setSelectedSector(String(sectorRows[0].id));
+        } else {
+          setError("No sectors were returned. Upload will use your first available company sector automatically.");
         }
+      } catch (loadError) {
+        if (!mounted) return;
+        setSectors([]);
+        setUploadedHistory([]);
+        setSelectedSector("");
+        setError(loadError?.message || "Failed to load sectors. Upload will use your first available company sector automatically.");
       } finally {
         if (mounted) setIsLoading(false);
       }
@@ -81,8 +89,8 @@ export default function DataUpload() {
   };
 
   const handleUpload = async () => {
-    if (!selectedFile || !selectedSector) {
-      setError("Select sector and file before uploading.");
+    if (!selectedFile) {
+      setError("Choose a file before uploading.");
       return;
     }
     setError("");
@@ -91,7 +99,7 @@ export default function DataUpload() {
     try {
       const formData = new FormData();
       formData.append("file", selectedFile);
-      formData.append("sector_id", selectedSector);
+      formData.append("sector_id", selectedSector || "0");
       if (selectedProduct) formData.append("product_id", selectedProduct);
 
       const response = await uploadData(formData);
@@ -137,6 +145,34 @@ export default function DataUpload() {
     } finally {
       setDeletingId(null);
     }
+  };
+
+  const renderExtractionDetails = (payload, tone = "emerald") => {
+    const extraction = payload?.extraction;
+    if (!extraction) return null;
+
+    const warnings = extraction.warnings || payload.ingest_warnings || [];
+    const toneClasses = tone === "amber"
+      ? "border-amber-200 bg-amber-100/60 text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
+      : "border-emerald-200 bg-emerald-100/70 text-emerald-800";
+
+    return (
+      <div className={`mt-3 rounded-lg border px-3 py-2 text-xs ${toneClasses}`}>
+        <p className="font-semibold">
+          File type: {(payload.file_type || extraction.file_type || "unknown").toUpperCase()} | Extraction: {extraction.confidence_label} ({Math.round((extraction.confidence_score || 0) * 100)}%)
+        </p>
+        <p className="mt-1">
+          Parsed {extraction.rows_extracted ?? 0} rows and {extraction.columns_extracted ?? 0} columns.
+        </p>
+        {warnings.length ? (
+          <ul className="mt-2 list-disc space-y-1 pl-4">
+            {warnings.slice(0, 4).map((warning, index) => (
+              <li key={`${warning}-${index}`}>{warning}</li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
+    );
   };
 
   if (isLoading) {
@@ -274,6 +310,7 @@ export default function DataUpload() {
               <p className="mt-1 text-xs text-emerald-700">
                 Raw ID: {result.raw_data_id} | Cleaned ID: {result.cleaned_data_id}
               </p>
+              {renderExtractionDetails(result)}
             </div>
           ) : null}
 
@@ -283,6 +320,7 @@ export default function DataUpload() {
               <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
                 Rows: {analysisResult.summary?.rows ?? 0} | Columns: {analysisResult.summary?.columns ?? 0} | Quality: {analysisResult.summary?.quality_score ?? 0}%
               </p>
+              {renderExtractionDetails(analysisResult, "amber")}
 
               <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
                 <div className="rounded-lg border border-amber-100 bg-white p-3 dark:border-amber-800 dark:bg-slate-900/60">
@@ -325,7 +363,9 @@ export default function DataUpload() {
               uploadedHistory.slice().reverse().map((dataset) => (
                 <div key={dataset.id} className="rounded-lg border border-theme-light bg-theme-secondary p-3">
                   <div className="flex items-start justify-between gap-2">
-                    <p className="text-sm font-semibold text-theme-primary">Dataset #{dataset.id}</p>
+                    <p className="text-sm font-semibold text-theme-primary">
+                      {dataset.name || `Dataset #${dataset.id}`}
+                    </p>
                     <button
                       type="button"
                       onClick={() => handleDeleteDataset(dataset.id)}
@@ -337,7 +377,7 @@ export default function DataUpload() {
                     </button>
                   </div>
                   <p className="mt-1 text-xs text-theme-muted">
-                    {dataset.sector_name || "General"} | {(dataset.row_count || 0).toLocaleString()} rows
+                    {dataset.sector_name || "General"} | {(dataset.file_type || "unknown").toUpperCase()} | {(dataset.row_count || 0).toLocaleString()} rows
                   </p>
                   <p className="mt-1 text-xs text-theme-muted">
                     {dataset.has_cleaned_data ? "Initial cleaned" : "Pending cleaning"}

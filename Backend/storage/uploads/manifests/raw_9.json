@@ -1,0 +1,27 @@
+{
+  "raw_data_id": 9,
+  "sector_id": 1,
+  "product_id": null,
+  "original_file": {
+    "filename": "unstructured_sdas.csv",
+    "stored_name": "20260529172512_a86ea7d5_unstructured_sdas.csv",
+    "stored_path": "storage\\uploads\\originals\\20260529172512_a86ea7d5_unstructured_sdas.csv",
+    "size_bytes": 1288,
+    "content_type": "text/csv"
+  },
+  "extraction": {
+    "file_type": "csv",
+    "content_type": "text/csv",
+    "rows_extracted": 30,
+    "columns_extracted": 7,
+    "missing_cells": 0,
+    "missing_ratio": 0.0,
+    "confidence_score": 0.9,
+    "confidence_label": "high",
+    "warnings": [
+      "Inferred 1 missing value(s) for column 'Sector' from neighboring rows."
+    ]
+  },
+  "uploaded_by": 4,
+  "uploaded_at": "2026-05-29T17:25:12.969828"
+}

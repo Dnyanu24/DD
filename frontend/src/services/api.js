@@ -1,5 +1,5 @@
 // Use env base URL, normalize 0.0.0.0, and keep last-working backend URL.
-const RAW_BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+const RAW_BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8001";
 const NORMALIZED_DEFAULT_BASE_URL = RAW_BASE_URL.replace("0.0.0.0", "127.0.0.1");
 const STORED_BASE_URL = localStorage.getItem("api_base_url");
 let BASE_URL = (STORED_BASE_URL || NORMALIZED_DEFAULT_BASE_URL).replace("0.0.0.0", "127.0.0.1");
@@ -7,10 +7,10 @@ let BASE_URL = (STORED_BASE_URL || NORMALIZED_DEFAULT_BASE_URL).replace("0.0.0.0
 const FALLBACK_BASE_URLS = Array.from(
   new Set([
     NORMALIZED_DEFAULT_BASE_URL,
-    "http://127.0.0.1:8000",
-    "http://localhost:8000",
     "http://127.0.0.1:8001",
     "http://localhost:8001",
+    "http://127.0.0.1:8000",
+    "http://localhost:8000",
   ])
 );
 
@@ -74,14 +74,18 @@ export async function login(username, password) {
     console.log("Login request to:", `${BASE_URL}/api/auth/login`);
     console.log("Request body:", JSON.stringify(requestBody));
 
-    const res = await requestWithBaseFallback(`/api/auth/login`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Accept": "application/json"
+    const res = await requestWithBaseFallback(
+      `/api/auth/login`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json"
+        },
+        body: JSON.stringify(requestBody),
       },
-      body: JSON.stringify(requestBody),
-    });
+      { fallbackOnStatus: [401, 404, 502, 503, 504] }
+    );
 
     console.log("Response status:", res.status);
     
@@ -454,7 +458,7 @@ export async function deleteReport(reportId) {
 }
 
 export async function getDataCleaningStats() {
-  const res = await fetch(`${BASE_URL}/api/analysis/cleaning-stats`, {
+  const res = await requestWithBaseFallback(`/api/analysis/cleaning-stats`, {
     headers: {
       ...getAuthHeaders(),
     },
@@ -463,7 +467,7 @@ export async function getDataCleaningStats() {
 }
 
 export async function getCleanedDatasets() {
-  const res = await fetch(`${BASE_URL}/api/analysis/cleaned-datasets`, {
+  const res = await requestWithBaseFallback(`/api/analysis/cleaned-datasets`, {
     headers: {
       ...getAuthHeaders(),
     },
@@ -561,12 +565,16 @@ export async function downloadAllCleanedDatasets(format = "csv") {
 }
 
 export async function deleteCleanedHistory() {
-  const res = await requestWithBaseFallback(`/api/analysis/cleaned-datasets/history`, {
-    method: "DELETE",
-    headers: {
-      ...getAuthHeaders(),
+  const res = await requestWithBaseFallback(
+    `/api/analysis/cleaned-datasets/history`,
+    {
+      method: "DELETE",
+      headers: {
+        ...getAuthHeaders(),
+      },
     },
-  });
+    { fallbackOnStatus: [404, 405, 502, 503, 504] }
+  );
   const data = await res.json();
   if (!res.ok) {
     throw new Error(data?.detail || data?.message || "Failed to delete cleaned history");

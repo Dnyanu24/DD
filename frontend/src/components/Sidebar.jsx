@@ -10,7 +10,6 @@ import {
   FileText, 
   Users, 
   Settings,
-  User,
   Sun,
   Moon,
   LogOut
@@ -30,7 +29,6 @@ export default function Sidebar() {
     Visualizations: BarChart3,
     Reports: FileText,
     "Role Management": Users,
-    Profile: User,
     Settings,
   };
 

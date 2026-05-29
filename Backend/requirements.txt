@@ -12,4 +12,5 @@ python-jose[cryptography]
 passlib[bcrypt]
 python-decouple
 statsmodels
+pdfplumber
 pymupdf
