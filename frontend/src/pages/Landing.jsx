@@ -143,7 +143,7 @@ export default function Landing() {
             const Icon = item.icon;
             return (
               <div key={item.title} className="rounded-lg border border-theme-light bg-theme-card p-5 shadow-theme">
-                <div className="rounded-lg bg-teal-50 p-2 text-teal-700 dark:bg-teal-950/40 dark:text-teal-200 w-fit">
+                <div className="w-fit rounded-lg bg-teal-50 p-2 text-teal-700 dark:bg-teal-950/40 dark:text-teal-200">
                   <Icon className="h-5 w-5" />
                 </div>
                 <h2 className="mt-4 text-lg font-semibold text-theme-primary">{item.title}</h2>

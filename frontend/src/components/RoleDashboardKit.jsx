@@ -32,6 +32,12 @@ import {
 const palette = ["#2563eb", "#22c55e", "#8b5cf6", "#f97316", "#06b6d4"];
 const chartGrid = "rgba(148, 163, 184, 0.16)";
 const chartText = "#94a3b8";
+const trendShapes = [
+  [28, 42, 36, 56, 50, 72, 86],
+  [44, 38, 52, 61, 58, 74, 79],
+  [22, 31, 48, 45, 67, 63, 82],
+  [58, 54, 63, 59, 73, 78, 91],
+];
 
 export const roleDashboardPresets = {
   CEO: {
@@ -187,16 +193,36 @@ export const roleDashboardPresets = {
 
 function MetricCard({ item }) {
   const Icon = item.icon;
+  const points = trendShapes[item.title.length % trendShapes.length];
   return (
-    <div className="rounded-lg border border-theme-light bg-theme-card p-4 shadow-theme">
-      <div className="flex items-center gap-4">
-        <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full" style={{ backgroundColor: `${item.color}22`, color: item.color }}>
-          {createElement(Icon, { className: "h-7 w-7" })}
-        </div>
-        <div>
-          <p className="text-xs font-semibold uppercase text-theme-muted">{item.title}</p>
-          <p className="mt-1 text-2xl font-semibold text-theme-primary">{item.value}</p>
-          <p className="mt-1 text-xs font-semibold text-emerald-600">{item.trend}</p>
+    <div className="group overflow-hidden rounded-lg border border-theme-light bg-theme-card shadow-theme">
+      <div className="flex min-h-[132px]">
+        <div className="w-1.5" style={{ backgroundColor: item.color }} />
+        <div className="flex flex-1 flex-col justify-between p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold uppercase text-theme-muted">{item.title}</p>
+              <p className="mt-2 text-3xl font-semibold text-theme-primary">{item.value}</p>
+            </div>
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg" style={{ backgroundColor: `${item.color}18`, color: item.color }}>
+              {createElement(Icon, { className: "h-6 w-6" })}
+            </div>
+          </div>
+          <div className="mt-4 flex items-end justify-between gap-4">
+            <div>
+              <p className="text-xs font-semibold text-emerald-600">{item.trend}</p>
+              <p className="mt-1 text-[11px] text-theme-muted">Compared with previous cycle</p>
+            </div>
+            <div className="flex h-10 items-end gap-1">
+              {points.map((height, index) => (
+                <span
+                  key={`${item.title}-${index}`}
+                  className="w-1.5 rounded-t-full"
+                  style={{ height: `${height}%`, backgroundColor: item.color, opacity: 0.28 + index * 0.08 }}
+                />
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -205,9 +231,9 @@ function MetricCard({ item }) {
 
 function Panel({ title, subtitle, icon: Icon, children }) {
   return (
-    <section className="rounded-lg border border-theme-light bg-theme-card p-5 shadow-theme">
-      <div className="mb-4 flex items-start gap-3">
-        <div className="rounded-lg bg-teal-50 p-2 text-teal-700 dark:bg-teal-950/40 dark:text-teal-200">
+    <section className="overflow-hidden rounded-lg border border-theme-light bg-theme-card shadow-theme">
+      <div className="flex items-start gap-3 border-b border-theme-light bg-theme-secondary px-5 py-4">
+        <div className="rounded-lg bg-theme-card p-2 text-teal-700 dark:text-teal-200">
           {createElement(Icon, { className: "h-5 w-5" })}
         </div>
         <div>
@@ -215,7 +241,7 @@ function Panel({ title, subtitle, icon: Icon, children }) {
           <p className="mt-1 text-xs text-theme-muted">{subtitle}</p>
         </div>
       </div>
-      {children}
+      <div className="p-5">{children}</div>
     </section>
   );
 }
@@ -268,13 +294,13 @@ function Heatmap() {
           {rows.map((row) => <p key={row} className="h-5 text-right text-xs text-theme-muted">{row}</p>)}
         </div>
         <div>
-          <div className="grid grid-cols-11 gap-1">
+          <div className="grid grid-cols-11 gap-1 rounded-lg bg-theme-secondary p-2">
             {Array.from({ length: 11 }, (_, index) => <p key={index} className="text-center text-[10px] text-theme-muted">{index + 1}</p>)}
             {cells.map((value, index) => (
               <div
                 key={index}
-                className="h-5 rounded-sm"
-                style={{ backgroundColor: value > 82 ? "#f97316" : value > 62 ? "#ec4899" : value > 35 ? "#7c3aed" : "#312e81" }}
+                className="h-5 rounded-sm ring-1 ring-white/10"
+                style={{ backgroundColor: value > 82 ? "#f97316" : value > 62 ? "#db2777" : value > 35 ? "#7c3aed" : "#1d4ed8" }}
                 title={`${value}% missing intensity`}
               />
             ))}
@@ -301,20 +327,43 @@ function SystemPipeline() {
     ["Report", FileText],
   ];
   return (
-    <section className="rounded-lg border border-theme-light bg-theme-card p-5 shadow-theme">
-      <h3 className="text-lg font-semibold text-theme-primary">System Pipeline</h3>
-      <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
+    <section className="overflow-hidden rounded-lg border border-theme-light bg-theme-card shadow-theme">
+      <div className="border-b border-theme-light bg-theme-secondary px-5 py-4">
+        <h3 className="text-lg font-semibold text-theme-primary">System Pipeline</h3>
+        <p className="mt-1 text-xs text-theme-muted">Operational route from raw data to executive output.</p>
+      </div>
+      <div className="grid grid-cols-1 gap-0 p-5 md:grid-cols-7">
         {steps.map(([label, Icon], index) => (
-          <div key={label} className="relative rounded-lg bg-theme-secondary p-3 text-center">
-            <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full text-white" style={{ backgroundColor: palette[index % palette.length] }}>
-              {createElement(Icon, { className: "h-5 w-5" })}
+          <div key={label} className="relative flex items-center gap-3 border-l border-theme-light bg-theme-secondary p-3 first:border-l-0 md:flex-col md:text-center">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg text-white shadow-theme-md" style={{ backgroundColor: palette[index % palette.length] }}>
+              {createElement(Icon, { className: "h-6 w-6" })}
             </div>
-            <p className="mt-2 text-xs font-semibold text-theme-primary">{index + 1}. {label}</p>
-            <p className="mt-1 text-[11px] text-theme-muted">{index < 2 ? "Active" : "Ready"}</p>
+            <div>
+              <p className="text-xs font-semibold text-theme-primary">{index + 1}. {label}</p>
+              <p className="mt-1 text-[11px] text-theme-muted">{index < 3 ? "Completed" : index === 3 ? "Selected" : "Ready"}</p>
+            </div>
           </div>
         ))}
       </div>
     </section>
+  );
+}
+
+function CommandStrip({ preset }) {
+  return (
+    <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+      {[
+        ["Primary Focus", preset.quality[0]?.name || "Quality", `${preset.quality[0]?.value || 0}%`],
+        ["Best Signal", preset.performance.reduce((best, item) => item.score > best.score ? item : best, preset.performance[0]).label, "High confidence"],
+        ["Next Action", preset.cta, "Recommended"],
+      ].map(([label, value, hint]) => (
+        <div key={label} className="rounded-lg border border-theme-light bg-theme-secondary p-4">
+          <p className="text-[11px] font-semibold uppercase text-theme-muted">{label}</p>
+          <p className="mt-2 text-lg font-semibold text-theme-primary">{value}</p>
+          <p className="mt-1 text-xs text-theme-muted">{hint}</p>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -326,14 +375,17 @@ export default function RoleDashboardHero({ role, children }) {
   return (
     <div className="space-y-6">
       <section className="overflow-hidden rounded-lg border border-theme-light bg-theme-card shadow-theme">
-        <div className="grid grid-cols-1 gap-0 xl:grid-cols-[1fr_360px]">
+        <div className="grid grid-cols-1 gap-0 xl:grid-cols-[1fr_390px]">
           <div className="p-6">
             <div className="inline-flex items-center gap-2 rounded-full border border-teal-200 bg-teal-50 px-3 py-1 text-xs font-semibold uppercase text-teal-700 dark:border-teal-900 dark:bg-teal-950/40 dark:text-teal-200">
               <Layers3 className="h-3.5 w-3.5" />
               {preset.eyebrow}
             </div>
-            <h1 className="mt-4 text-3xl font-semibold text-theme-primary">{preset.title}</h1>
+            <h1 className="mt-4 max-w-4xl text-4xl font-semibold text-theme-primary">{preset.title}</h1>
             <p className="mt-2 max-w-3xl text-sm text-theme-muted">{preset.subtitle}</p>
+            <div className="mt-6">
+              <CommandStrip preset={preset} />
+            </div>
           </div>
           <div className="border-t border-theme-light bg-theme-secondary p-5 xl:border-l xl:border-t-0">
             <button type="button" className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-teal-600 px-4 py-3 text-sm font-semibold text-white hover:bg-teal-700">
@@ -342,8 +394,25 @@ export default function RoleDashboardHero({ role, children }) {
             </button>
             <div className="mt-4 rounded-lg border border-theme-light bg-theme-card p-4">
               <p className="text-xs font-semibold uppercase text-theme-muted">Operational Status</p>
-              <p className="mt-2 text-2xl font-semibold text-theme-primary">Live</p>
+              <div className="mt-3 flex items-center gap-3">
+                <span className="relative flex h-3 w-3">
+                  <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" />
+                  <span className="relative inline-flex h-3 w-3 rounded-full bg-emerald-500" />
+                </span>
+                <p className="text-2xl font-semibold text-theme-primary">Live</p>
+              </div>
               <p className="mt-1 text-xs text-theme-muted">Role-specific dashboard is reading the latest available system signals.</p>
+            </div>
+            <div className="mt-4 rounded-lg border border-theme-light bg-theme-card p-4">
+              <p className="text-xs font-semibold uppercase text-theme-muted">Cycle Readiness</p>
+              <div className="mt-3 h-2 rounded-full bg-theme-secondary">
+                <div className="h-2 rounded-full bg-teal-600" style={{ width: "86%" }} />
+              </div>
+              <div className="mt-3 flex justify-between text-xs text-theme-muted">
+                <span>Raw</span>
+                <span>Clean</span>
+                <span>Report</span>
+              </div>
             </div>
           </div>
         </div>
