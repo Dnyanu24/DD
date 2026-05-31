@@ -4,15 +4,18 @@ import { ThemeProvider } from "./context/ThemeContext";
 import Sidebar from "./components/Sidebar";
 import Header from "./components/Header";
 import ChatWidget from "./components/ChatWidget";
+import Landing from "./pages/Landing";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 import CEODashboard from "./pages/CEODashboard";
 import DataAnalystDashboard from "./pages/DataAnalystDashboard";
 import SalesManagerDashboard from "./pages/SalesManagerDashboard";
+import SectorHeadDashboard from "./pages/SectorHeadDashboard";
 import DataUpload from "./pages/DataUpload";
 import DataCleaning from "./pages/DataCleaning";
 import AIModels from "./pages/AIModels";
 import Visualizations from "./pages/Visualizations";
+import DashboardBuilder from "./pages/DashboardBuilder";
 import Reports from "./pages/Reports";
 import RoleManagement from "./pages/RoleManagement";
 import Settings from "./pages/Settings";
@@ -58,7 +61,7 @@ function DashboardRouter() {
     case "Sales Manager":
       return <SalesManagerDashboard />;
     case "Sector Head":
-      return <CEODashboard />; // Sector Head sees CEO dashboard
+      return <SectorHeadDashboard />;
     default:
       return <CEODashboard />;
   }
@@ -78,6 +81,7 @@ function AppLayout() {
             <Route path="/cleaning" element={<RoleRoute path="/cleaning"><DataCleaning /></RoleRoute>} />
             <Route path="/models" element={<RoleRoute path="/models"><AIModels /></RoleRoute>} />
             <Route path="/visualizations" element={<RoleRoute path="/visualizations"><Visualizations /></RoleRoute>} />
+            <Route path="/dashboard-builder" element={<RoleRoute path="/dashboard-builder"><DashboardBuilder /></RoleRoute>} />
             <Route path="/reports" element={<RoleRoute path="/reports"><Reports /></RoleRoute>} />
             <Route path="/roles" element={<RoleRoute path="/roles"><RoleManagement /></RoleRoute>} />
             <Route path="/settings" element={<RoleRoute path="/settings"><Settings /></RoleRoute>} />
@@ -93,9 +97,10 @@ function AppLayout() {
 function PublicRoutes() {
   return (
     <Routes>
+      <Route path="/" element={<Landing />} />
       <Route path="/login" element={<Login />} />
       <Route path="/signup" element={<Signup />} />
-      <Route path="*" element={<Navigate to="/login" replace />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }

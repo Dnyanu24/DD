@@ -876,3 +876,62 @@ export async function chatWithAssistant(payload) {
   }
   return data;
 }
+
+export async function getDashboardLayouts() {
+  const res = await requestWithBaseFallback(`/api/dashboard-builder/`, {
+    headers: {
+      ...getAuthHeaders(),
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.detail || data?.message || "Failed to load dashboard layouts");
+  }
+  return data;
+}
+
+export async function createDashboardLayout(payload) {
+  const res = await requestWithBaseFallback(`/api/dashboard-builder/`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.detail || data?.message || "Failed to save dashboard");
+  }
+  return data;
+}
+
+export async function updateDashboardLayout(layoutId, payload) {
+  const res = await requestWithBaseFallback(`/api/dashboard-builder/${encodeURIComponent(String(layoutId))}`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.detail || data?.message || "Failed to update dashboard");
+  }
+  return data;
+}
+
+export async function deleteDashboardLayout(layoutId) {
+  const res = await requestWithBaseFallback(`/api/dashboard-builder/${encodeURIComponent(String(layoutId))}`, {
+    method: "DELETE",
+    headers: {
+      ...getAuthHeaders(),
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.detail || data?.message || "Failed to delete dashboard");
+  }
+  return data;
+}

@@ -174,6 +174,17 @@ class CompanyReport(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class DashboardLayout(Base):
+    __tablename__ = "dashboard_layouts"
+    id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(Integer, ForeignKey("companies.id"), nullable=False)
+    title = Column(String(255), nullable=False)
+    layout = Column(JSON, nullable=False)
+    created_by = Column(Integer, ForeignKey("users_roles.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+
 class UserSetting(Base):
     __tablename__ = "user_settings"
     id = Column(Integer, primary_key=True, index=True)

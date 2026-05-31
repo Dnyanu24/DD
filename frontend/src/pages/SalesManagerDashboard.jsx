@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { createElement, useEffect, useState } from "react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar } from "recharts";
+import { Bell, CalendarClock, CheckCircle2, DollarSign, LineChart as LineChartIcon, MapPinned, Megaphone, PieChart as PieChartIcon, Sparkles, Target, TrendingUp, Users } from "lucide-react";
 import KPICard from "../components/KPICard";
 import { getRoleInsights } from "../services/api";
+import RoleDashboardHero from "../components/RoleDashboardKit";
 
 // Default data - can be overridden by props or API
 const defaultSalesData = [
@@ -54,6 +56,40 @@ const EmptyState = ({ message = "No data available" }) => (
     </div>
   </div>
 );
+
+function SalesFocusCard({ title, value, hint, icon: Icon }) {
+  return (
+    <div className="rounded-lg border border-theme-light bg-theme-card p-4 shadow-theme">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase text-theme-muted">{title}</p>
+          <p className="mt-2 text-2xl font-semibold text-theme-primary">{value}</p>
+          <p className="mt-1 text-xs text-theme-muted">{hint}</p>
+        </div>
+        <div className="rounded-lg bg-teal-50 p-2 text-teal-700 dark:bg-teal-950/40 dark:text-teal-200">
+          {createElement(Icon, { className: "h-5 w-5" })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SalesPanel({ title, subtitle, icon: Icon, children }) {
+  return (
+    <section className="rounded-lg border border-theme-light bg-theme-card p-5 shadow-theme">
+      <div className="mb-4 flex items-start gap-3">
+        <div className="rounded-lg bg-teal-50 p-2 text-teal-700 dark:bg-teal-950/40 dark:text-teal-200">
+          {createElement(Icon, { className: "h-5 w-5" })}
+        </div>
+        <div>
+          <h3 className="text-lg font-semibold text-theme-primary">{title}</h3>
+          <p className="mt-1 text-xs text-theme-muted">{subtitle}</p>
+        </div>
+      </div>
+      {children}
+    </section>
+  );
+}
 
 export default function SalesManagerDashboard({ 
   salesData = defaultSalesData,
@@ -120,11 +156,66 @@ export default function SalesManagerDashboard({
 
   return (
     <div className="space-y-6">
+      <RoleDashboardHero role="Sales Manager" />
+
+      <section className="rounded-lg border border-theme-light bg-theme-card p-6 shadow-theme">
+        <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-full border border-teal-200 bg-teal-50 px-3 py-1 text-xs font-semibold uppercase text-teal-700 dark:border-teal-900 dark:bg-teal-950/40 dark:text-teal-200">
+              <Target className="h-3.5 w-3.5" />
+              Sales Command Center
+            </div>
+            <h1 className="mt-4 text-3xl font-semibold text-theme-primary">Revenue, pipeline, and forecast performance</h1>
+            <p className="mt-2 max-w-3xl text-sm text-theme-muted">
+              Track daily sales, customer mix, regional momentum, demand forecasts, and AI-recommended actions.
+            </p>
+          </div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:min-w-[520px]">
+            <SalesFocusCard title="Best Day" value={salesData.reduce((best, row) => row.sales > best.sales ? row : best, salesData[0] || { sales: 0, day: "-" }).day} hint="Top actual sales" icon={TrendingUp} />
+            <SalesFocusCard title="Target" value="78%" hint="Monthly progress" icon={Target} />
+            <SalesFocusCard title="Segments" value={customerSegments.length} hint="Customer groups" icon={Users} />
+            <SalesFocusCard title="Forecast" value="$205k" hint="Next high point" icon={CalendarClock} />
+          </div>
+        </div>
+      </section>
+
       {insightsError ? (
         <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
           {insightsError}
         </div>
       ) : null}
+
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_360px]">
+        <SalesPanel title="Sales Playbook" subtitle="Role-specific next moves from current signals" icon={Megaphone}>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            {[
+              { title: "Protect target gap", detail: "Prioritize high-value opportunities before month close.", icon: Target },
+              { title: "Expand strong regions", detail: "Use regional performance to guide follow-up campaigns.", icon: MapPinned },
+              { title: "Review forecast risk", detail: "Compare actual vs forecast weekly and adjust plan.", icon: LineChartIcon },
+            ].map((item) => {
+              const Icon = item.icon;
+              return (
+                <div key={item.title} className="rounded-lg border border-theme-light bg-theme-secondary p-4">
+                  <Icon className="h-5 w-5 text-teal-600" />
+                  <p className="mt-3 text-sm font-semibold text-theme-primary">{item.title}</p>
+                  <p className="mt-1 text-xs text-theme-muted">{item.detail}</p>
+                </div>
+              );
+            })}
+          </div>
+        </SalesPanel>
+
+        <SalesPanel title="Priority Signals" subtitle="Alerts and recommendations" icon={Bell}>
+          <div className="space-y-3">
+            {alerts.slice(0, 3).map((alert) => (
+              <div key={alert.id} className="rounded-lg bg-theme-secondary p-3">
+                <p className="text-sm font-semibold text-theme-primary">{alert.message}</p>
+                <p className="mt-1 text-xs text-theme-muted">{alert.time}</p>
+              </div>
+            ))}
+          </div>
+        </SalesPanel>
+      </div>
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">

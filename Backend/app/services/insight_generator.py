@@ -1,6 +1,7 @@
 from typing import Dict, Any, List
 from sqlalchemy.orm import Session
-from app.models import User, CleanedData, RawData, Sector, PipelineIterationLog, AIPrediction, AIRecommendation, DataQualityScore
+from sqlalchemy import func
+from app.models import User, CleanedData, RawData, Sector, AIPrediction, AIRecommendation, DataQualityScore
 from datetime import datetime, timedelta
 
 def generate_role_insights(db: Session, user: User) -> Dict[str, Any]:
@@ -19,10 +20,8 @@ def generate_role_insights(db: Session, user: User) -> Dict[str, Any]:
     users_by_role = db.query(User.role, func.count(User.id)).filter(User.company_id == user.company_id).group_by(User.role).all()
     users_by_role = [{'role': r[0], 'count': r[1]} for r in users_by_role]
 
-    recent_runs = db.query(PipelineIterationLog).filter(
-        PipelineIterationLog.company_id == user.company_id
-    ).order_by(PipelineIterationLog.created_at.desc()).limit(10).all()
-    recent_runs = [{'run_key': r.run_key, 'task': r.task, 'status': r.status, 'iteration': r.iteration, 'created_at': r.created_at.isoformat()} for r in recent_runs]
+    recent_runs = []
+    pipeline_health = {}
 
     # Role-specific
     role = user.role.lower()
@@ -74,7 +73,7 @@ def generate_role_insights(db: Session, user: User) -> Dict[str, Any]:
 
     return {
         'kpis': kpis,
-        'pipeline_health': getattr(locals().get('pipeline_health'), {}),
+        'pipeline_health': pipeline_health,
         'users': {'by_role': users_by_role},
         'statistics': statistics,
         'recommendations': recommendations,

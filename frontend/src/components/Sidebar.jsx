@@ -10,6 +10,7 @@ import {
   FileText, 
   Users, 
   Settings,
+  PanelsTopLeft,
   Sun,
   Moon,
   LogOut
@@ -27,6 +28,7 @@ export default function Sidebar() {
     "Data Cleaning": Sparkles,
     "AI Models": Bot,
     Visualizations: BarChart3,
+    "Dashboard Builder": PanelsTopLeft,
     Reports: FileText,
     "Role Management": Users,
     Settings,

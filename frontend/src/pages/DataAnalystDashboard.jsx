@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { createElement, useEffect, useState } from "react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Scatter } from "recharts";
+import { Activity, AlertTriangle, BarChart3, Database, FileSearch, GitBranch, ShieldCheck, Sparkles, Wand2 } from "lucide-react";
 import KPICard from "../components/KPICard";
 import { getRoleInsights } from "../services/api";
+import RoleDashboardHero from "../components/RoleDashboardKit";
 
 // Default data - can be overridden by props or API
 const defaultDataQualityData = [
@@ -56,6 +58,40 @@ const EmptyState = ({ message = "No data available" }) => (
   </div>
 );
 
+function WorkbenchCard({ title, value, hint, icon: Icon }) {
+  return (
+    <div className="rounded-lg border border-theme-light bg-theme-card p-4 shadow-theme">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase text-theme-muted">{title}</p>
+          <p className="mt-2 text-2xl font-semibold text-theme-primary">{value}</p>
+          <p className="mt-1 text-xs text-theme-muted">{hint}</p>
+        </div>
+        <div className="rounded-lg bg-teal-50 p-2 text-teal-700 dark:bg-teal-950/40 dark:text-teal-200">
+          {createElement(Icon, { className: "h-5 w-5" })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AnalyticsPanel({ title, subtitle, icon: Icon, children }) {
+  return (
+    <section className="rounded-lg border border-theme-light bg-theme-card p-5 shadow-theme">
+      <div className="mb-4 flex items-start gap-3">
+        <div className="rounded-lg bg-teal-50 p-2 text-teal-700 dark:bg-teal-950/40 dark:text-teal-200">
+          {createElement(Icon, { className: "h-5 w-5" })}
+        </div>
+        <div>
+          <h3 className="text-lg font-semibold text-theme-primary">{title}</h3>
+          <p className="mt-1 text-xs text-theme-muted">{subtitle}</p>
+        </div>
+      </div>
+      {children}
+    </section>
+  );
+}
+
 export default function DataAnalystDashboard({ 
   dataQualityData = defaultDataQualityData,
   anomalyData = defaultAnomalyData,
@@ -97,6 +133,28 @@ export default function DataAnalystDashboard({
 
   return (
     <div className="space-y-6">
+      <RoleDashboardHero role="Data Analyst" />
+
+      <section className="rounded-lg border border-theme-light bg-theme-card p-6 shadow-theme">
+        <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-full border border-teal-200 bg-teal-50 px-3 py-1 text-xs font-semibold uppercase text-teal-700 dark:border-teal-900 dark:bg-teal-950/40 dark:text-teal-200">
+              <FileSearch className="h-3.5 w-3.5" />
+              Analyst Workbench
+            </div>
+            <h1 className="mt-4 text-3xl font-semibold text-theme-primary">Data quality, anomalies, and model readiness</h1>
+            <p className="mt-2 max-w-3xl text-sm text-theme-muted">
+              Review cleaning quality, detect anomalies, validate models, and prepare trusted datasets for dashboards and reports.
+            </p>
+          </div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:min-w-[520px]">
+            <WorkbenchCard title="Quality" value={insights?.kpis?.[2]?.value ? `${insights.kpis[2].value}${insights.kpis[2].unit || ""}` : "92.4%"} hint="Current score" icon={ShieldCheck} />
+            <WorkbenchCard title="Correlations" value={insights?.kpis?.[3]?.value ?? 12} hint="Detected pairs" icon={GitBranch} />
+            <WorkbenchCard title="Models" value={modelPerformanceData.length} hint="Compared" icon={Activity} />
+            <WorkbenchCard title="Alerts" value={anomalyData.filter((item) => item.anomaly != null).length} hint="Anomalies" icon={AlertTriangle} />
+          </div>
+        </div>
+      </section>
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -125,6 +183,34 @@ export default function DataAnalystDashboard({
           {insightsError}
         </div>
       ) : null}
+
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_360px]">
+        <AnalyticsPanel title="Pipeline Focus" subtitle="Recommended analyst actions for the next data cycle" icon={Wand2}>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            {[
+              { title: "Clean pending uploads", detail: "Run full pipeline on datasets with missing or shifted columns." },
+              { title: "Validate outliers", detail: "Review extreme numeric values before model training." },
+              { title: "Publish clean outputs", detail: "Save high-quality cleaned data for dashboards and reports." },
+            ].map((item) => (
+              <div key={item.title} className="rounded-lg border border-theme-light bg-theme-secondary p-4">
+                <p className="text-sm font-semibold text-theme-primary">{item.title}</p>
+                <p className="mt-1 text-xs text-theme-muted">{item.detail}</p>
+              </div>
+            ))}
+          </div>
+        </AnalyticsPanel>
+
+        <AnalyticsPanel title="Insight Queue" subtitle="Personalized role suggestions" icon={Sparkles}>
+          <div className="space-y-3">
+            {(Array.isArray(insights?.actions) && insights.actions.length ? insights.actions : ["Profile newly uploaded files", "Check missing-value columns", "Open visualizations after cleaning"]).slice(0, 4).map((action, index) => (
+              <div key={`${action}-${index}`} className="flex items-start gap-3 rounded-lg bg-theme-secondary p-3">
+                <Database className="mt-0.5 h-4 w-4 text-teal-600" />
+                <p className="text-sm text-theme-secondary">{action}</p>
+              </div>
+            ))}
+          </div>
+        </AnalyticsPanel>
+      </div>
 
       {/* Charts Row 1 */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

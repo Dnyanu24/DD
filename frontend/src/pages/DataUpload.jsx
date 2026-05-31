@@ -1,5 +1,24 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, Database, FileUp, Loader2, Trash2 } from "lucide-react";
+import {
+  AlertTriangle,
+  BarChart3,
+  CheckCircle2,
+  Clock3,
+  Database,
+  FileSpreadsheet,
+  FileText,
+  FileUp,
+  FolderOpen,
+  Gauge,
+  Layers3,
+  Loader2,
+  PieChart as PieChartIcon,
+  RefreshCw,
+  ShieldCheck,
+  Sparkles,
+  Trash2,
+  UploadCloud,
+} from "lucide-react";
 import {
   Bar,
   BarChart,
@@ -28,6 +47,48 @@ export default function DataUpload() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
+
+  const selectedFileMeta = selectedFile
+    ? {
+        name: selectedFile.name,
+        size: `${(selectedFile.size / 1024 / 1024).toFixed(2)} MB`,
+        extension: selectedFile.name.split(".").pop()?.toUpperCase() || "FILE",
+      }
+    : null;
+
+  const uploadStats = [
+    {
+      label: "Uploaded",
+      value: uploadedHistory.length,
+      hint: "files in workspace",
+      icon: Database,
+    },
+    {
+      label: "Clean Ready",
+      value: uploadedHistory.filter((item) => item.has_cleaned_data).length,
+      hint: "available for cleaning",
+      icon: ShieldCheck,
+    },
+    {
+      label: "Formats",
+      value: "8",
+      hint: "csv xlsx json txt pdf",
+      icon: FileSpreadsheet,
+    },
+    {
+      label: "Quality",
+      value: analysisResult?.summary?.quality_score != null ? `${analysisResult.summary.quality_score}%` : "--",
+      hint: analysisResult ? "latest scan" : "run analyze",
+      icon: Gauge,
+    },
+  ];
+
+  const pipelineSteps = [
+    { label: "Select Scope", detail: selectedSector ? "Sector selected" : "Choose a sector", icon: FolderOpen, complete: Boolean(selectedSector) },
+    { label: "Attach File", detail: selectedFileMeta ? selectedFileMeta.extension : "CSV, Excel, JSON, TXT, PDF", icon: UploadCloud, complete: Boolean(selectedFile) },
+    { label: "Analyze Errors", detail: analysisResult ? "Profile generated" : "Optional quality scan", icon: BarChart3, complete: Boolean(analysisResult) },
+    { label: "Store Dataset", detail: result ? "Database record created" : "Ready for cleaning page", icon: Database, complete: Boolean(result) },
+  ];
 
   useEffect(() => {
     let mounted = true;
@@ -188,17 +249,109 @@ export default function DataUpload() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-theme-primary">Data Upload</h1>
-        <p className="mt-1 text-theme-muted">
-          Upload file to database, run initial cleaning, and make it available in Data Cleaning.
-        </p>
+      <section className="overflow-hidden rounded-lg border border-theme-light bg-theme-card shadow-theme">
+        <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px]">
+          <div className="p-6">
+            <div className="inline-flex items-center gap-2 rounded-full border border-teal-200 bg-teal-50 px-3 py-1 text-xs font-semibold uppercase text-teal-700 dark:border-teal-900 dark:bg-teal-950/40 dark:text-teal-200">
+              <FileUp className="h-3.5 w-3.5" />
+              Data Ingestion
+            </div>
+            <h1 className="mt-4 text-3xl font-semibold text-theme-primary">Upload, profile, and prepare datasets</h1>
+            <p className="mt-2 max-w-3xl text-sm text-theme-muted">
+              Bring raw files into SDAS, inspect data quality before saving, and make trusted inputs available for cleaning, models, dashboards, and reports.
+            </p>
+            <div className="mt-5 flex flex-wrap gap-2">
+              {["CSV", "XLSX", "JSON", "TXT", "TSV", "LOG", "PDF"].map((format) => (
+                <span key={format} className="rounded-full border border-theme-light bg-theme-secondary px-3 py-1 text-xs font-semibold text-theme-muted">
+                  {format}
+                </span>
+              ))}
+            </div>
+          </div>
+          <div className="border-t border-theme-light bg-theme-secondary p-5 xl:border-l xl:border-t-0">
+            <p className="text-xs font-semibold uppercase text-theme-muted">Selected File</p>
+            {selectedFileMeta ? (
+              <div className="mt-4 rounded-lg border border-theme-light bg-theme-card p-4">
+                <div className="flex items-start gap-3">
+                  <div className="rounded-lg bg-teal-50 p-2 text-teal-700 dark:bg-teal-950/40 dark:text-teal-200">
+                    <FileText className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-theme-primary">{selectedFileMeta.name}</p>
+                    <p className="mt-1 text-xs text-theme-muted">{selectedFileMeta.extension} | {selectedFileMeta.size}</p>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-4 rounded-lg border border-dashed border-theme-dark bg-theme-card p-5 text-center">
+                <UploadCloud className="mx-auto h-8 w-8 text-teal-600" />
+                <p className="mt-2 text-sm font-semibold text-theme-primary">No file selected</p>
+                <p className="mt-1 text-xs text-theme-muted">Choose a file below to start ingestion.</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {uploadStats.map((stat) => {
+          const Icon = stat.icon;
+          return (
+            <div key={stat.label} className="rounded-lg border border-theme-light bg-theme-card p-4 shadow-theme">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase text-theme-muted">{stat.label}</p>
+                  <p className="mt-2 text-2xl font-semibold text-theme-primary">{stat.value}</p>
+                  <p className="mt-1 text-xs text-theme-muted">{stat.hint}</p>
+                </div>
+                <div className="rounded-lg bg-teal-50 p-2 text-teal-700 dark:bg-teal-950/40 dark:text-teal-200">
+                  <Icon className="h-5 w-5" />
+                </div>
+              </div>
+            </div>
+          );
+        })}
       </div>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-        <section className="bg-theme-card rounded-xl border border-theme-light p-6 xl:col-span-2">
+      <section className="rounded-lg border border-theme-light bg-theme-card p-5 shadow-theme">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div>
+            <h2 className="flex items-center gap-2 text-lg font-semibold text-theme-primary">
+              <Layers3 className="h-5 w-5 text-teal-600" />
+              Ingestion Pipeline
+            </h2>
+            <p className="mt-1 text-xs text-theme-muted">Follow these stages from raw file to dashboard-ready data.</p>
+          </div>
+          <button
+            type="button"
+            onClick={refreshHistory}
+            className="inline-flex items-center gap-2 rounded-lg border border-theme-light bg-theme-secondary px-3 py-2 text-xs font-semibold text-theme-primary hover:bg-theme-tertiary"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            Refresh
+          </button>
+        </div>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+          {pipelineSteps.map((step) => {
+            const Icon = step.icon;
+            return (
+              <div key={step.label} className={`rounded-lg border p-4 ${step.complete ? "border-teal-200 bg-teal-50/70 dark:border-teal-900 dark:bg-teal-950/30" : "border-theme-light bg-theme-secondary"}`}>
+                <div className="flex items-center justify-between">
+                  <Icon className={step.complete ? "h-5 w-5 text-teal-700 dark:text-teal-200" : "h-5 w-5 text-theme-muted"} />
+                  {step.complete ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <Clock3 className="h-4 w-4 text-theme-muted" />}
+                </div>
+                <p className="mt-3 text-sm font-semibold text-theme-primary">{step.label}</p>
+                <p className="mt-1 text-xs text-theme-muted">{step.detail}</p>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_360px]">
+        <section className="bg-theme-card rounded-lg border border-theme-light p-6 shadow-theme">
           <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold text-theme-primary">
-            <FileUp className="h-5 w-5 text-teal-500" />
+            <UploadCloud className="h-5 w-5 text-teal-600" />
             Upload Dataset
           </h2>
 
@@ -236,14 +389,17 @@ export default function DataUpload() {
             </div>
           </div>
 
-          <div className="mt-4">
+          <div className="mt-4 rounded-lg border border-dashed border-theme-dark bg-theme-secondary p-4">
             <label className="mb-1 block text-sm font-medium text-theme-secondary">Data File</label>
             <input
               type="file"
               accept=".csv,.xlsx,.xls,.json,.txt,.tsv,.log,.pdf"
               onChange={(event) => setSelectedFile(event.target.files?.[0] || null)}
-              className="w-full rounded-lg border border-theme-light bg-theme-secondary px-3 py-2 text-theme-primary"
+              className="w-full rounded-lg border border-theme-light bg-theme-card px-3 py-2 text-theme-primary"
             />
+            <p className="mt-2 text-xs text-theme-muted">
+              Analyze Errors reads the selected file and shows missing values, duplicate risk, type issues, and quality score before saving.
+            </p>
           </div>
 
           {error ? (
@@ -316,7 +472,10 @@ export default function DataUpload() {
 
           {analysisResult ? (
             <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-700 dark:bg-amber-950/20">
-              <h3 className="text-sm font-semibold text-amber-700 dark:text-amber-300">Dataset Error Analysis</h3>
+              <h3 className="flex items-center gap-2 text-sm font-semibold text-amber-700 dark:text-amber-300">
+                <Sparkles className="h-4 w-4" />
+                Dataset Error Analysis
+              </h3>
               <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
                 Rows: {analysisResult.summary?.rows ?? 0} | Columns: {analysisResult.summary?.columns ?? 0} | Quality: {analysisResult.summary?.quality_score ?? 0}%
               </p>
@@ -324,7 +483,10 @@ export default function DataUpload() {
 
               <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
                 <div className="rounded-lg border border-amber-100 bg-white p-3 dark:border-amber-800 dark:bg-slate-900/60">
-                  <p className="mb-2 text-xs font-semibold text-theme-secondary">Issue Distribution</p>
+                  <p className="mb-2 flex items-center gap-2 text-xs font-semibold text-theme-secondary">
+                    <PieChartIcon className="h-3.5 w-3.5" />
+                    Issue Distribution
+                  </p>
                   <ResponsiveContainer width="100%" height={220}>
                     <PieChart>
                       <Pie data={analysisResult.issues || []} dataKey="count" nameKey="name" outerRadius={80} label>
@@ -338,7 +500,10 @@ export default function DataUpload() {
                 </div>
 
                 <div className="rounded-lg border border-amber-100 bg-white p-3 dark:border-amber-800 dark:bg-slate-900/60">
-                  <p className="mb-2 text-xs font-semibold text-theme-secondary">Missing Values By Column</p>
+                  <p className="mb-2 flex items-center gap-2 text-xs font-semibold text-theme-secondary">
+                    <BarChart3 className="h-3.5 w-3.5" />
+                    Missing Values By Column
+                  </p>
                   <ResponsiveContainer width="100%" height={220}>
                     <BarChart data={analysisResult.column_missing || []}>
                       <CartesianGrid stroke="rgba(148,163,184,0.2)" strokeDasharray="3 3" />
@@ -354,8 +519,11 @@ export default function DataUpload() {
           ) : null}
         </section>
 
-        <section className="bg-theme-card rounded-xl border border-theme-light p-6">
-          <h2 className="mb-4 text-lg font-semibold text-theme-primary">Recently Uploaded</h2>
+        <section className="bg-theme-card rounded-lg border border-theme-light p-6 shadow-theme">
+          <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold text-theme-primary">
+            <Database className="h-5 w-5 text-teal-600" />
+            Recently Uploaded
+          </h2>
           <div className="max-h-[28rem] space-y-2 overflow-y-auto">
             {uploadedHistory.length === 0 ? (
               <p className="text-sm text-theme-muted">No uploaded datasets yet.</p>

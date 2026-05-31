@@ -13,7 +13,7 @@ from app.database import engine
 from app.database import run_sqlite_migrations
 from app.models import Base
 from app.routers import dashboard, auth
-from app.routers import upload, analysis, ai, reports
+from app.routers import upload, analysis, ai, reports, dashboard_builder, insights
 
 Base.metadata.create_all(bind=engine)
 run_sqlite_migrations()
@@ -48,6 +48,8 @@ app.include_router(upload.router, prefix="/api/upload")
 app.include_router(analysis.router, prefix="/api/analysis")
 app.include_router(ai.router, prefix="/api/ai")
 app.include_router(dashboard.router, prefix="/api/dashboard")
+app.include_router(dashboard_builder.router, prefix="/api/dashboard-builder")
+app.include_router(insights.router, prefix="/api/insights")
 
 @app.get("/")
 def root():

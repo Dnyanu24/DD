@@ -1,0 +1,28 @@
+{
+  "raw_data_id": 12,
+  "sector_id": 1,
+  "product_id": null,
+  "original_file": {
+    "filename": "sample_pdf_data.pdf",
+    "stored_name": "20260530081442_dabe6b46_sample_pdf_data.pdf",
+    "stored_path": "storage\\uploads\\originals\\20260530081442_dabe6b46_sample_pdf_data.pdf",
+    "size_bytes": 2339,
+    "content_type": "application/pdf"
+  },
+  "extraction": {
+    "file_type": "pdf",
+    "content_type": "application/pdf",
+    "rows_extracted": 60,
+    "columns_extracted": 9,
+    "missing_cells": 0,
+    "missing_ratio": 0.0,
+    "confidence_score": 0.8,
+    "confidence_label": "high",
+    "warnings": [
+      "Repaired 37 row(s) whose extracted PDF column count did not match the header.",
+      "Inferred 6 missing value(s) for column 'Sector_Name' from neighboring rows."
+    ]
+  },
+  "uploaded_by": 4,
+  "uploaded_at": "2026-05-30T08:14:45.837498"
+}

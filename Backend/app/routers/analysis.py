@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request
 from fastapi.responses import StreamingResponse, Response
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from typing import Dict, Any, Optional, Callable, List
 import pandas as pd
@@ -10,6 +11,7 @@ import io
 import zipfile
 from datetime import datetime
 import re
+from pathlib import Path
 
 from app.database import SessionLocal
 from app.models import RawData, CleanedData, AIPrediction, AIRecommendation, DataQualityScore, Sector, Product
@@ -27,6 +29,15 @@ from app.models import User
 
 
 router = APIRouter()
+
+UPLOAD_STORAGE_ROOT = Path(__file__).resolve().parents[2] / "storage" / "uploads"
+
+
+class SavedCleanedDatasetRequest(BaseModel):
+    source_cleaned_data_id: int
+    filename: str = Field(default="saved_cleaned_dataset.json", max_length=255)
+    columns: List[str] = Field(default_factory=list)
+    rows: List[Dict[str, Any]] = Field(default_factory=list)
 
 def get_db():
     db = SessionLocal()
@@ -72,6 +83,21 @@ def _sanitize_sector_key(value: Any) -> str:
     text = str(value).strip().lower()
     text = re.sub(r"[^a-z0-9]+", "_", text)
     return text.strip("_") or "unknown"
+
+
+def _safe_saved_filename(filename: str) -> str:
+    base = Path(filename or "saved_cleaned_dataset.json").name
+    safe = re.sub(r"[^a-zA-Z0-9._-]+", "_", base).strip("._")
+    return safe or "saved_cleaned_dataset.json"
+
+
+def _write_saved_dataset_manifest(raw_data_id: int, manifest: Dict[str, Any]) -> str:
+    manifests_dir = UPLOAD_STORAGE_ROOT / "manifests"
+    manifests_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = manifests_dir / f"raw_{raw_data_id}.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2, default=str), encoding="utf-8")
+    backend_root = Path(__file__).resolve().parents[2]
+    return str(manifest_path.relative_to(backend_root))
 
 
 def _structure_dataframe(df: pd.DataFrame) -> pd.DataFrame:
@@ -997,6 +1023,109 @@ async def download_cleaned_dataset(
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{base_name}.csv"'},
     )
+
+
+@router.post("/saved-cleaned-datasets")
+async def save_cleaned_dataset(
+    payload: SavedCleanedDatasetRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Save a cleaned dataset as a reusable dataset in the database."""
+    sector_ids = _allowed_sector_ids(db, current_user)
+    uploader_ids = _allowed_uploader_ids(db, current_user)
+    if not sector_ids or not uploader_ids:
+        raise HTTPException(status_code=404, detail="Cleaned dataset not found")
+
+    row = db.query(CleanedData, RawData)\
+        .join(RawData, CleanedData.raw_data_id == RawData.id)\
+        .filter(
+            CleanedData.id == payload.source_cleaned_data_id,
+            RawData.sector_id.in_(sector_ids),
+            RawData.uploaded_by.in_(uploader_ids),
+        ).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Cleaned dataset not found")
+
+    source_cleaned, source_raw = row
+    source_records = source_cleaned.cleaned_data if isinstance(source_cleaned.cleaned_data, list) else []
+    records = payload.rows if payload.rows else source_records
+    if not isinstance(records, list):
+        raise HTTPException(status_code=400, detail="Rows must be a list of objects")
+    records = [item for item in records if isinstance(item, dict)]
+    if not records:
+        raise HTTPException(status_code=400, detail="No cleaned rows available to save")
+
+    max_rows = 50000
+    if len(records) > max_rows:
+        records = records[:max_rows]
+
+    safe_records = _to_json_safe_records(pd.DataFrame(records))
+    filename = _safe_saved_filename(payload.filename)
+    if not filename.lower().endswith(".json"):
+        filename = f"{filename}.json"
+
+    try:
+        saved_raw = RawData(
+            sector_id=source_raw.sector_id,
+            product_id=source_raw.product_id,
+            data=safe_records,
+            uploaded_by=current_user.id,
+        )
+        db.add(saved_raw)
+        db.commit()
+        db.refresh(saved_raw)
+
+        saved_cleaned = CleanedData(
+            raw_data_id=saved_raw.id,
+            cleaned_data=safe_records,
+            cleaning_algorithm=f"saved_from_cleaned_{source_cleaned.id}",
+            quality_score=float(source_cleaned.quality_score or 1.0),
+        )
+        db.add(saved_cleaned)
+        db.commit()
+        db.refresh(saved_cleaned)
+
+        manifest_path = _write_saved_dataset_manifest(saved_raw.id, {
+            "raw_data_id": saved_raw.id,
+            "sector_id": source_raw.sector_id,
+            "product_id": source_raw.product_id,
+            "uploaded_by": current_user.id,
+            "uploaded_at": saved_raw.uploaded_at.isoformat() if saved_raw.uploaded_at else datetime.utcnow().isoformat(),
+            "saved_from": {
+                "cleaned_data_id": source_cleaned.id,
+                "raw_data_id": source_raw.id,
+            },
+            "original_file": {
+                "filename": filename,
+                "stored_name": filename,
+                "stored_path": "",
+                "size_bytes": len(json.dumps(safe_records, default=str).encode("utf-8")),
+                "content_type": "application/json",
+            },
+            "extraction": {
+                "file_type": "json",
+                "row_count": len(safe_records),
+                "column_count": len(safe_records[0].keys()) if safe_records else 0,
+                "warnings": [],
+                "source": "saved_cleaned_dataset",
+            },
+        })
+
+        return {
+            "message": "Cleaned dataset saved successfully",
+            "saved_id": saved_raw.id,
+            "saved_cleaned_data_id": saved_cleaned.id,
+            "source_cleaned_data_id": source_cleaned.id,
+            "row_count": len(safe_records),
+            "column_count": len(safe_records[0].keys()) if safe_records else 0,
+            "manifest_path": manifest_path,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to save cleaned dataset: {str(exc)}")
 
 
 @router.get("/cleaned-datasets/download-all")

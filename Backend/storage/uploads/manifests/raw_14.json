@@ -1,0 +1,25 @@
+{
+  "raw_data_id": 14,
+  "sector_id": 1,
+  "product_id": null,
+  "uploaded_by": 4,
+  "uploaded_at": "2026-05-30T17:41:10.854846",
+  "saved_from": {
+    "cleaned_data_id": 1,
+    "raw_data_id": 12
+  },
+  "original_file": {
+    "filename": "cleaned_1.json",
+    "stored_name": "cleaned_1.json",
+    "stored_path": "",
+    "size_bytes": 13754,
+    "content_type": "application/json"
+  },
+  "extraction": {
+    "file_type": "json",
+    "row_count": 60,
+    "column_count": 9,
+    "warnings": [],
+    "source": "saved_cleaned_dataset"
+  }
+}
