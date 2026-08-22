@@ -7,15 +7,11 @@ sqlalchemy
 psycopg2-binary
 python-multipart
 spacy
-nltk
+nltk==3.8.1
+textblob==0.17.1
 python-jose[cryptography]
 passlib[bcrypt]
 python-decouple
 statsmodels
-<<<<<<< HEAD
 pdfplumber
-=======
-nltk==3.8.1
-textblob==0.17.1
->>>>>>> dfabe921f483efac4c5949f5167982c61c3b59c3
 pymupdf
